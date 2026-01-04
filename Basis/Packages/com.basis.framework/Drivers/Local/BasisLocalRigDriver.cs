@@ -595,6 +595,9 @@ namespace Basis.Scripts.Drivers
                 data.PrevBendNormalRightArm = SmoothDir(data.PrevBendNormalRightArm, n, smoothing);
             }
 
+            data.SpineBendmaxBendDeg = SMModuleCalibration.SpineBendmaxBendDeg;
+            data.ClampedmaxChestDelta = SMModuleCalibration.ClampedmaxChestDelta;
+
             BasisFullIKConstraint.data = data;
 
             Builder.SyncLayers();
@@ -845,15 +848,9 @@ namespace Basis.Scripts.Drivers
                 data.SetOffsetRotation(slot, t.rotation);
                 data.SetTargetRotation(slot, t.rotation);
             }
-            //   float Distance = Vector3.Distance(BasisLocalBoneDriver.HeadControl.TposeLocalScaled.position, BasisLocalBoneDriver.HipsControl.TposeLocalScaled.position);
-            data.SpineBendmaxBendDeg = 90;
-            data.ClampedmaxChestDelta = 90;
-            // data.minFactor = 1f;//Distance ;
-            //  data.maxFactor = 2f;//Distance * 1.4f;
 
             BasisFullIKConstraint.data = data;
         }
-
         private static bool HasRigLayer(BasisLocalBoneControl control)
         {
             return control.HasRigLayer == BasisHasRigLayer.HasRigLayer;

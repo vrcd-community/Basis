@@ -926,6 +926,17 @@ namespace Basis.BasisUI
             tFBIKRightShoulderEuroRot.Descriptor.SetTitle("Right Shoulder Euro Rot");
             tFBIKRightShoulderEuroRot.AssignBinding(BasisSettingsDefaults.FBIKRightShoulderEuroRot);
 
+
+            var spinemaxdeg = PanelSlider.CreateEntryAndBind(
+    IkGroup,
+    PanelSlider.SliderSettings.Advanced("Spine Max Deg", 0, 360, false, 1, ValueDisplayMode.Degrees),
+    BasisSettingsDefaults.spinemaxdeg);
+
+            var chestmaxdelta = PanelSlider.CreateEntryAndBind(
+    IkGroup,
+    PanelSlider.SliderSettings.Advanced("Chest max Rotation", 0, 360, false, 1, ValueDisplayMode.Degrees),
+    BasisSettingsDefaults.chestmaxdelta);
+
             descriptor.ForceRebuild();
             return tab;
         }

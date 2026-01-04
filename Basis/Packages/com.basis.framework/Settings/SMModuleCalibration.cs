@@ -523,12 +523,33 @@ public class SMModuleCalibration : BasisSettingsBase
                         BasisLocalRigDriver.EuroRot[BasisLocalRigDriver.S_RightShoulder] = parsed;
                     break;
                 }
+
+
+            case "spinemaxdeg":
+                {
+                    if (SliderReadOption(optionValue, out var f))
+                    {
+                        SpineBendmaxBendDeg = f;
+                    }
+
+                    break;
+                }
+            case "chestmaxdelta":
+                {
+                    if (SliderReadOption(optionValue, out var f))
+                    {
+                        ClampedmaxChestDelta = f;
+                    }
+
+                    break;
+                }
             default:
            //     BasisDebug.LogError($"UnImplemented Settings Name! {matchedSettingName}", BasisDebug.LogTag.Device);
                 break;
         }
     }
-
+    public static float SpineBendmaxBendDeg = 90;
+    public static float ClampedmaxChestDelta = 90;
     public override void ChangedSettings()
     {
         // If UI calls ChangedSettings a lot, this prevents reapplying.

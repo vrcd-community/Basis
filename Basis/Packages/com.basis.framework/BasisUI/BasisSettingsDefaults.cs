@@ -190,6 +190,10 @@ new("Avatar Download Size", new BasisPlatformDefault<float>(256));
         public static BasisSettingsBinding<float> FBIKRotationSmoothingHz =>
             new("FBIKRotationSmoothingHz", new BasisPlatformDefault<float>(25f));
 
+        public static BasisSettingsBinding<float> spinemaxdeg =>
+    new("spinemaxdeg", new BasisPlatformDefault<float>(90));
+        public static BasisSettingsBinding<float> chestmaxdelta =>
+    new("chestmaxdelta", new BasisPlatformDefault<float>(90));
 
         // ---------------- HIPS ----------------
         public static BasisSettingsBinding<bool> FBIKHipsSmoothPos =>
