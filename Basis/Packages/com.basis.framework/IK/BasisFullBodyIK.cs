@@ -722,7 +722,7 @@ w20, w54;
         public Vector3Property prevBendNormalRightArm;
 
         public Vector3Property prevBendNormalLeftLeg;
-
+        public float horizontal01;
         public void ProcessRootMotion(AnimationStream stream) { }
         public void ProcessAnimation(AnimationStream stream)
         {
@@ -797,7 +797,9 @@ w20, w54;
             Vector3 chestForward = chestRot * Vector3.forward;
 
             // "lying down" detector
-            bool isHorizontal = Mathf.Abs(Vector3.Dot(hipsUp, WorldUP)) < 0.45f;
+            float targetlyingdown = (Mathf.Abs(Vector3.Dot(hipsUp, WorldUP)) < 0.45f) ? 1f : 0f;
+            horizontal01 = Mathf.Lerp(horizontal01, targetlyingdown, 1f - Mathf.Exp(-stream.deltaTime * 10f));
+            bool isHorizontal = horizontal01 > 0.5f;
 #if UNITY_EDITOR
             BasisDebug.Log($"isHorizontal {isHorizontal}");
 #endif
