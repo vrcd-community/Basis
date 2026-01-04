@@ -561,10 +561,59 @@ namespace Basis.Scripts.Drivers
 
             data.m_TargetRotationRightShoulder = rs;
 
+            // Legs: normal = cross(upper->lower, lower->foot)
+            if (data.LeftUpperLeg && data.LeftLowerLeg && data.leftFoot)
+            {
+                Vector3 ab = data.LeftLowerLeg.position - data.LeftUpperLeg.position;
+                Vector3 bc = data.leftFoot.position - data.LeftLowerLeg.position;
+                Vector3 n = Vector3.Cross(ab, bc);
+                data.PrevBendNormalLeftLeg = SmoothDir(data.PrevBendNormalLeftLeg, n, smoothing);
+            }
+
+            if (data.RightUpperLeg && data.RightLowerLeg && data.RightFoot)
+            {
+                Vector3 ab = data.RightLowerLeg.position - data.RightUpperLeg.position;
+                Vector3 bc = data.RightFoot.position - data.RightLowerLeg.position;
+                Vector3 n = Vector3.Cross(ab, bc);
+                data.PrevBendNormalRightLeg = SmoothDir(data.PrevBendNormalRightLeg, n, smoothing);
+            }
+
+            // Arms: normal = cross(upper->lower, lower->hand)
+            if (data.leftUpperArm && data.leftLowerArm && data.LeftHand)
+            {
+                Vector3 ab = data.leftLowerArm.position - data.leftUpperArm.position;
+                Vector3 bc = data.LeftHand.position - data.leftLowerArm.position;
+                Vector3 n = Vector3.Cross(ab, bc);
+                data.PrevBendNormalLeftArm = SmoothDir(data.PrevBendNormalLeftArm, n, smoothing);
+            }
+
+            if (data.RightUpperArm && data.RightLowerArm && data.RightHand)
+            {
+                Vector3 ab = data.RightLowerArm.position - data.RightUpperArm.position;
+                Vector3 bc = data.RightHand.position - data.RightLowerArm.position;
+                Vector3 n = Vector3.Cross(ab, bc);
+                data.PrevBendNormalRightArm = SmoothDir(data.PrevBendNormalRightArm, n, smoothing);
+            }
+
             BasisFullIKConstraint.data = data;
 
             Builder.SyncLayers();
             PlayableGraph.Evaluate(deltaTime);
+        }
+        [Range(0f, 1f)] public float smoothing = 0.85f;
+        static Vector3 SmoothDir(Vector3 prev, Vector3 current, float keepPrev)
+        {
+            if (current.sqrMagnitude < 1e-10f) return prev.sqrMagnitude > 1e-10f ? prev.normalized : Vector3.forward;
+
+            Vector3 a = prev.sqrMagnitude > 1e-10f ? prev.normalized : current.normalized;
+            Vector3 b = current.normalized;
+
+            // prevent cancellation when opposite
+            if (Vector3.Dot(a, b) < -0.5f) b = -b;
+
+            Vector3 v = a * keepPrev + b * (1f - keepPrev);
+            if (v.sqrMagnitude < 1e-10f) return b;
+            return v.normalized;
         }
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static float ExpAlpha(float hz, float dt)
@@ -796,11 +845,10 @@ namespace Basis.Scripts.Drivers
                 data.SetOffsetRotation(slot, t.rotation);
                 data.SetTargetRotation(slot, t.rotation);
             }
+            //   float Distance = Vector3.Distance(BasisLocalBoneDriver.HeadControl.TposeLocalScaled.position, BasisLocalBoneDriver.HipsControl.TposeLocalScaled.position);
             data.maxBendDeg = 90;
-            data.minFactor = 0.4f;
-            data.maxFactor = 1f;
-            data.struggleStart = 0.9f;
-            data.struggleEnd = 1;
+            // data.minFactor = 1f;//Distance ;
+            //  data.maxFactor = 2f;//Distance * 1.4f;
             data.maxChestDelta = 90;
 
             BasisFullIKConstraint.data = data;

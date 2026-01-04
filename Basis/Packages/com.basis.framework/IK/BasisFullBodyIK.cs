@@ -272,8 +272,6 @@ namespace UnityEngine.Animations.Rigging
         [SyncSceneToStream, SerializeField] public Quaternion m_CalibratedRotationLeftShoulder;
 
         [SyncSceneToStream, SerializeField] public float m_MaxBendDeg;
-        [SyncSceneToStream, SerializeField] public float m_MinFactor;
-        [SyncSceneToStream, SerializeField] public float m_MaxFactor;
         [SyncSceneToStream, SerializeField] public float m_StruggleStart;
         [SyncSceneToStream, SerializeField] public float m_StruggleEnd;
         [SyncSceneToStream, SerializeField] public float m_MaxChestDeltaDeg;
@@ -362,11 +360,18 @@ namespace UnityEngine.Animations.Rigging
         public string TargetRotationRightShoulderProperty => ConstraintsUtils.ConstructConstraintDataPropertyName(nameof(m_TargetRotationRightShoulder));
 
         public string MaxBendDegFloatProperty => ConstraintsUtils.ConstructConstraintDataPropertyName(nameof(m_MaxBendDeg));
-        public string MinFactorFloatProperty => ConstraintsUtils.ConstructConstraintDataPropertyName(nameof(m_MinFactor));
-        public string MaxFactorFloatProperty => ConstraintsUtils.ConstructConstraintDataPropertyName(nameof(m_MaxFactor));
-        public string StruggleStartFloatProperty => ConstraintsUtils.ConstructConstraintDataPropertyName(nameof(m_StruggleStart));
-        public string StruggleEndFloatProperty => ConstraintsUtils.ConstructConstraintDataPropertyName(nameof(m_StruggleEnd));
         public string MaxChestDeltaDegFloatProperty => ConstraintsUtils.ConstructConstraintDataPropertyName(nameof(m_MaxChestDeltaDeg));
+
+        public string PrevBendNormalLeftLegProperty => ConstraintsUtils.ConstructConstraintDataPropertyName(nameof(PrevBendNormalLeftLeg));
+        public string PrevBendNormalRightLegProperty => ConstraintsUtils.ConstructConstraintDataPropertyName(nameof(PrevBendNormalRightLeg));
+        public string PrevBendNormalLeftArmProperty => ConstraintsUtils.ConstructConstraintDataPropertyName(nameof(PrevBendNormalLeftArm));
+        public string PrevBendNormalRightArmProperty => ConstraintsUtils.ConstructConstraintDataPropertyName(nameof(PrevBendNormalRightArm));
+
+
+        [SyncSceneToStream, SerializeField] public Vector3 PrevBendNormalLeftLeg;
+        [SyncSceneToStream, SerializeField] public Vector3 PrevBendNormalRightLeg;
+        [SyncSceneToStream, SerializeField] public Vector3 PrevBendNormalLeftArm;
+        [SyncSceneToStream, SerializeField] public Vector3 PrevBendNormalRightArm;
 
         public bool hintWeightHead { get => m_HintHeadEnabled; set => m_HintHeadEnabled = value; }
         public bool EnabledSpineIK { get => m_SpineIKEnabled; set => m_SpineIKEnabled = value; }
@@ -392,10 +397,6 @@ namespace UnityEngine.Animations.Rigging
         public bool EnabledLeftShoulder { get => m_enabledLeftShoulder; set => m_enabledLeftShoulder = value; }
 
         public float maxBendDeg { get => m_MaxBendDeg; set => m_MaxBendDeg = value; }
-        public float minFactor { get => m_MinFactor; set => m_MinFactor = value; }
-        public float maxFactor { get => m_MaxFactor; set => m_MaxFactor = value; }
-        public float struggleStart { get => m_StruggleStart; set => m_StruggleStart = value; }
-        public float struggleEnd { get => m_StruggleEnd; set => m_StruggleEnd = value; }
         public float maxChestDelta { get => m_MaxChestDeltaDeg; set => m_MaxChestDeltaDeg = value; }
 
         // ---------- Validation ----------
@@ -489,6 +490,11 @@ namespace UnityEngine.Animations.Rigging
             Weight10 = Weight11 = Weight12 = Weight13 = Weight14 =
             Weight15 = Weight16 = Weight17 = Weight18 = Weight19 =
             Weight20 = Weight54 = false;
+
+            PrevBendNormalLeftLeg = -Vector3.right;
+            PrevBendNormalRightLeg = Vector3.right;
+            PrevBendNormalLeftArm = Vector3.forward;
+            PrevBendNormalRightArm = Vector3.forward;
         }
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public void SetTargetPosition(int idx, in Vector3 v)
@@ -711,11 +717,17 @@ w0, w1, w2, w3, w4, w5, w6, w7, w8, w9,
 w10, w11, w12, w13, w14, w15, w16, w17, w18, w19,
 w20, w54;
 
-        public FloatProperty handRadius, handSkin, chestRadius, collisionSkin, MinHeadSpineHeight, maxBendDeg, minFactor, maxFactor, struggleStart, struggleEnd, MaxChestDeltaDeg;
+        public FloatProperty handRadius, handSkin, chestRadius, collisionSkin, MinHeadSpineHeight, maxBendDeg, MaxChestDeltaDeg;
 
         const float k_Epsilon = 1e-5f; // or 0.00001f
         const float k_MinMag = 1e-6f;
         public FloatProperty jobWeight { get; set; }
+        public Vector3Property prevBendNormalRightLeg;
+        public Vector3Property prevBendNormalLeftArm;
+        public Vector3Property prevBendNormalRightArm;
+
+        public Vector3Property prevBendNormalLeftLeg;
+
         public void ProcessRootMotion(AnimationStream stream) { }
         public void ProcessAnimation(AnimationStream stream)
         {
@@ -739,8 +751,6 @@ w20, w54;
 
             // 1) Limit spine bend by pushing hips down if needed
             hipsTargetPos = EnforceSpineBendLimit(headTargetPos, hipsTargetPos, maxBendDeg.Get(stream));
-
-            hipsTargetPos = ClampHipsAroundHead(headTargetPos, hipsTargetPos, restDist, minFactor.Get(stream), maxFactor.Get(stream));
 
             targetPositionHips.Set(stream, hipsTargetPos);
 
@@ -784,18 +794,76 @@ w20, w54;
                 ApplyRotation(stream, HandleRightShoulder, TargetRotationRightShoulder, targetOffsetRightShoulder);
             }
 
-            SolveLegs(stream, enabledLeftLowerLeg, HandleLeftUpperLeg, HandleLeftLowerLeg, HandleLeftFoot, targetPositionLeftLowerLeg, targetRotationLeftLowerLeg, hintPositionLeftLowerLeg, hintRotationLeftLowerLeg, hintWeightLeftLowerLeg, targetOffsetLeftFoot, bendNormalHead);
-            SolveLegs(stream, enabledRightLowerLeg, HandleRightUpperLeg, HandleRightLowerLeg, HandleRightFoot, targetPositionRightLowerLeg, targetRotationRightLowerLeg, hintPositionRightLowerLeg, hintRotationRightLowerLeg, hintWeightRightLowerLeg, targetOffsetRightFoot, bendNormalHead);
+            Quaternion hipsRot = HandleHips.IsValid(stream) ? HandleHips.GetRotation(stream) : Quaternion.identity;
+            Quaternion chestRot = HandleChest.IsValid(stream) ? HandleChest.GetRotation(stream) : hipsRot;
 
-            SolveHand(stream,
-                enabledLeftHand, HandleLeftUpperArm, HandleLeftLowerArm, HandleLeftHand,
-                targetPositionLeftHand, targetRotationLeftHand, hintPositionLeftHand, hintRotationLeftHand, hintWeightLeftHand, targetOffsetLeftHand,
-                HandleChest, HandleNeck, chestRadius, collisionSkin, collisionsEnabled, handRadius, handSkin, useHandCapsule, protectElbow);
+            Vector3 hipsUp = hipsRot * Vector3.up;
+            Vector3 hipsRight = hipsRot * Vector3.right;
+            Vector3 chestForward = chestRot * Vector3.forward;
 
-            SolveHand(stream,
+            // "lying down" detector
+            bool isHorizontal = Mathf.Abs(Vector3.Dot(hipsUp, Vector3.up)) < 0.45f;
+
+            // body-based knee normals (left bends ~-right, right bends ~+right)
+            Vector3 kneeNormalLeft = -hipsRight;
+            Vector3 kneeNormalRight = hipsRight;
+
+             kneeNormalLeft  = BlendNormals(kneeNormalLeft,  prevBendNormalLeftLeg.Get(stream),  isHorizontal ? 0.75f : 0.25f);
+             kneeNormalRight = BlendNormals(kneeNormalRight, prevBendNormalRightLeg.Get(stream), isHorizontal ? 0.75f : 0.25f);
+
+            // Disable hint influence when horizontal (prevents tracker-roll flips)
+            bool useHintLeft = hintWeightLeftLowerLeg.Get(stream) && !isHorizontal;
+            bool useHintRight = hintWeightRightLowerLeg.Get(stream) && !isHorizontal;
+
+            prevBendNormalLeftLeg.Set(stream, kneeNormalLeft);
+            prevBendNormalRightLeg.Set(stream, kneeNormalRight);
+
+            // Replace your two SolveLegs(...) calls with:
+            SolveLegsStable(stream, enabledLeftLowerLeg,
+                HandleLeftUpperLeg, HandleLeftLowerLeg, HandleLeftFoot,
+                targetPositionLeftLowerLeg, targetRotationLeftLowerLeg,
+                hintPositionLeftLowerLeg, hintRotationLeftLowerLeg,
+                useHintLeft,
+                targetOffsetLeftFoot,
+                kneeNormalLeft);
+
+            SolveLegsStable(stream, enabledRightLowerLeg,
+                HandleRightUpperLeg, HandleRightLowerLeg, HandleRightFoot,
+                targetPositionRightLowerLeg, targetRotationRightLowerLeg,
+                hintPositionRightLowerLeg, hintRotationRightLowerLeg,
+                useHintRight,
+                targetOffsetRightFoot,
+                kneeNormalRight);
+
+            Vector3 elbowNormalLeft = SafeNormalize(chestForward - hipsRight * 0.35f, chestForward);
+            Vector3 elbowNormalRight = SafeNormalize(chestForward + hipsRight * 0.35f, chestForward);
+
+            Vector3 prevLA = prevBendNormalLeftArm.Get(stream);
+            Vector3 prevRA = prevBendNormalRightArm.Get(stream);
+
+            elbowNormalLeft = BlendNormals(elbowNormalLeft, prevLA, isHorizontal ? 0.65f : 0.20f);
+            elbowNormalRight = BlendNormals(elbowNormalRight, prevRA, isHorizontal ? 0.65f : 0.20f);
+
+            prevBendNormalLeftArm.Set(stream, elbowNormalLeft);
+            prevBendNormalRightArm.Set(stream, elbowNormalRight);
+
+            SolveHandStable(stream,
+                    enabledLeftHand, HandleLeftUpperArm, HandleLeftLowerArm, HandleLeftHand,
+                    targetPositionLeftHand, targetRotationLeftHand, hintPositionLeftHand, hintRotationLeftHand,
+                    hintWeightLeftHand.Get(stream) && !isHorizontal,
+                    targetOffsetLeftHand,
+                    HandleChest, HandleNeck, chestRadius, collisionSkin, collisionsEnabled,
+                    handRadius, handSkin, useHandCapsule, protectElbow,
+                    elbowNormalLeft);
+
+            SolveHandStable(stream,
                 enabledRightHand, HandleRightUpperArm, HandleRightLowerArm, HandleRightHand,
-                targetPositionRightHand, targetRotationRightHand, hintPositionRightHand, hintRotationRightHand, hintWeightRightHand, targetOffsetRightHand,
-                HandleChest, HandleNeck, chestRadius, collisionSkin, collisionsEnabled, handRadius, handSkin, useHandCapsule, protectElbow);
+                targetPositionRightHand, targetRotationRightHand, hintPositionRightHand, hintRotationRightHand,
+                hintWeightRightHand.Get(stream) && !isHorizontal,
+                targetOffsetRightHand,
+                HandleChest, HandleNeck, chestRadius, collisionSkin, collisionsEnabled,
+                handRadius, handSkin, useHandCapsule, protectElbow,
+                elbowNormalRight);
 
 
             ApplyRotation(stream, leftToeEnabled, HandleLeftToe, leftDrivenTargetRot, targetOffsetLeftToe);
@@ -897,35 +965,36 @@ w20, w54;
 
             handle.SetRotation(stream, V4ToQuat(targetRotProp.Get(stream)) * RotationOffset);
         }
-        static Vector3 ClampHipsAroundHead(Vector3 headPos, Vector3 hipsPos, float restDistance, float minFactor, float maxFactor)
+        static Vector3 SafeNormalize(Vector3 v, Vector3 fallback)
         {
-            const float maxHorizontalFactor = 0.35f;
+            float m2 = v.sqrMagnitude;
+            if (m2 < 1e-6f) return fallback;
+            return v / Mathf.Sqrt(m2);
+        }
+        static Vector3 ClampTargetToReach(Vector3 aPos, Vector3 tPos, float abLen, float bcLen)
+        {
+            Vector3 at = tPos - aPos;
+            float atLen = at.magnitude;
+            if (atLen < 1e-6f) return tPos;
 
-            Vector3 headToHips = hipsPos - headPos;
-            float sqrMag = headToHips.sqrMagnitude;
-            if (sqrMag < k_SqrEpsilon)
-                return headPos + restDistance * minFactor * Vector3.down; // could also use previous frame’s axis
+            float maxReach = (abLen + bcLen) - 1e-4f;
+            float minReach = Mathf.Abs(abLen - bcLen) + 1e-4f;
 
-            // Use the head→hips direction as the "up" axis for the clamp
-            Vector3 up = headToHips / Mathf.Sqrt(sqrMag);
+            if (atLen > maxReach) return aPos + at * (maxReach / atLen);
+            if (atLen < minReach) return aPos + at * (minReach / atLen);
 
-            float verticalDot = Vector3.Dot(headToHips, up);
-            Vector3 vertical = up * verticalDot;
-            Vector3 lateral = headToHips - vertical;
+            return tPos;
+        }
+        static Vector3 BlendNormals(Vector3 bodyNormal, Vector3 prevNormal, float prevWeight)
+        {
+            Vector3 a = SafeNormalize(bodyNormal, Vector3.forward);
+            Vector3 b = SafeNormalize(prevNormal, a);
 
-            float absY = Mathf.Abs(verticalDot);
-            float minY = restDistance * minFactor;
-            float maxY = restDistance * maxFactor;
-            float clampedY = Mathf.Clamp(absY, minY, maxY) * Mathf.Sign(verticalDot);
-            vertical = up * clampedY;
+            // Avoid cancelling to near-zero when opposite
+            if (Vector3.Dot(a, b) < -0.5f) b = -b;
 
-            float lateralLen = lateral.magnitude;
-            float maxLateral = restDistance * maxHorizontalFactor;
-
-            if (lateralLen > maxLateral && lateralLen > k_Epsilon)
-                lateral *= maxLateral / lateralLen;
-
-            return headPos + vertical + lateral;
+            Vector3 v = a * (1f - prevWeight) + b * prevWeight;
+            return SafeNormalize(v, a);
         }
         public void SolveTwoBoneIKArms(
             AnimationStream stream,
@@ -1260,31 +1329,133 @@ w20, w54;
         }
 
         public Quaternion V4ToQuat(Vector4 v) => new Quaternion(v.x, v.y, v.z, v.w);
-        public void SolveLegs(AnimationStream stream, BoolProperty enabledProp,
-        ReadWriteTransformHandle root, ReadWriteTransformHandle mid, ReadWriteTransformHandle tip,
-        Vector3Property targetPosProp, Vector4Property targetRotProp, Vector3Property hintPosProp, Vector4Property hintRotProp,
-        BoolProperty hintWeightProp, Quaternion targetOffset, Vector3Property bendNormalProp)
+
+        public void SolveLegsStable(
+    AnimationStream stream,
+    BoolProperty enabledProp,
+    ReadWriteTransformHandle root, ReadWriteTransformHandle mid, ReadWriteTransformHandle tip,
+    Vector3Property targetPosProp, Vector4Property targetRotProp,
+    Vector3Property hintPosProp, Vector4Property hintRotProp,
+    bool useHint,
+    Quaternion targetOffset,
+    Vector3 bendNormal
+)
         {
-            if (!enabledProp.Get(stream))
+            if (!enabledProp.Get(stream) || !(root.IsValid(stream) && mid.IsValid(stream) && tip.IsValid(stream)))
             {
                 Pass(stream, root, mid, tip);
                 return;
             }
 
-            if (!(root.IsValid(stream) && mid.IsValid(stream) && tip.IsValid(stream)))
-            {
-                Pass(stream, root, mid, tip);
-                return;
-            }
+            Vector3 aPos = root.GetPosition(stream);
+            Vector3 bPos = mid.GetPosition(stream);
+            Vector3 cPos = tip.GetPosition(stream);
+
+            float abLen = (bPos - aPos).magnitude;
+            float bcLen = (cPos - bPos).magnitude;
+
+            Vector3 tPos = targetPosProp.Get(stream);
+            tPos = ClampTargetToReach(aPos, tPos, abLen, bcLen);
 
             Quaternion tRot = V4ToQuat(targetRotProp.Get(stream));
             Quaternion hRot = V4ToQuat(hintRotProp.Get(stream));
+            Vector3 hPos = hintPosProp.Get(stream);
 
-            AffineTransform target = new AffineTransform(targetPosProp.Get(stream), tRot);
-            AffineTransform hint = new AffineTransform(hintPosProp.Get(stream), hRot);
-            Vector3 bendNormal = bendNormalProp.Get(stream);
+            var target = new AffineTransform(tPos, tRot);
+            var hint = new AffineTransform(hPos, hRot);
 
-            SolveTwoBone(stream, root, mid, tip, target, hint, hintWeightProp.Get(stream), targetOffset, bendNormal);
+            SolveTwoBoneStable(stream, root, mid, tip, target, hint, useHint, targetOffset, bendNormal);
+        }
+        public void SolveTwoBoneStable(
+           AnimationStream stream,
+           ReadWriteTransformHandle root,
+           ReadWriteTransformHandle mid,
+           ReadWriteTransformHandle tip,
+           AffineTransform target,
+           AffineTransform hint,
+           bool useHint,
+           Quaternion targetOffset,
+           Vector3 bendNormal
+       )
+        {
+            Vector3 aPosition = root.GetPosition(stream);
+            Vector3 bPosition = mid.GetPosition(stream);
+            Vector3 cPosition = tip.GetPosition(stream);
+
+            Vector3 tPosition = target.translation;
+            Quaternion tRotation = target.rotation * targetOffset;
+
+            Vector3 ab = bPosition - aPosition;
+            Vector3 bc = cPosition - bPosition;
+            Vector3 ac = cPosition - aPosition;
+
+            float abLen = ab.magnitude;
+            float bcLen = bc.magnitude;
+            float acLen = ac.magnitude;
+
+            // Clamp again defensively (target may have been modified upstream)
+            tPosition = ClampTargetToReach(aPosition, tPosition, abLen, bcLen);
+
+            Vector3 atCorrected = tPosition - aPosition;
+            float atCorrectedLen = atCorrected.magnitude;
+
+            float oldAbcAngle = TriangleAngle(acLen, abLen, bcLen);
+            float newAbcAngle = TriangleAngle(atCorrectedLen, abLen, bcLen);
+
+            // Stable axis selection:
+            // 1) current plane cross(ab,bc)
+            // 2) hint plane (if allowed)
+            // 3) provided bendNormal (body-based / memory)
+            Vector3 axisFromPose = Vector3.Cross(ab, bc);
+            Vector3 axisFromHint = useHint ? Vector3.Cross(hint.translation - aPosition, bc) : Vector3.zero;
+
+            Vector3 axis = axisFromPose;
+            if (axis.sqrMagnitude < k_SqrEpsilon && axisFromHint.sqrMagnitude > k_SqrEpsilon)
+                axis = axisFromHint;
+
+            if (axis.sqrMagnitude < k_SqrEpsilon)
+                axis = bendNormal;
+
+            axis = SafeNormalize(axis, Vector3.forward);
+
+            float halfAngle = 0.5f * (oldAbcAngle - newAbcAngle);
+            float sin = Mathf.Sin(halfAngle);
+            float cos = Mathf.Cos(halfAngle);
+            Quaternion deltaR = new Quaternion(axis.x * sin, axis.y * sin, axis.z * sin, cos);
+            mid.SetRotation(stream, deltaR * mid.GetRotation(stream));
+
+            cPosition = tip.GetPosition(stream);
+            ac = cPosition - aPosition;
+
+            if (atCorrectedLen > k_Epsilon)
+                root.SetRotation(stream, QuaternionExt.FromToRotation(ac, atCorrected) * root.GetRotation(stream));
+
+            if (useHint)
+            {
+                float acSqrMag = ac.sqrMagnitude;
+                if (acSqrMag > 0f)
+                {
+                    bPosition = mid.GetPosition(stream);
+                    cPosition = tip.GetPosition(stream);
+                    ab = bPosition - aPosition;
+                    ac = cPosition - aPosition;
+
+                    Vector3 acNorm = ac / Mathf.Sqrt(acSqrMag);
+                    Vector3 ah = hint.translation - aPosition;
+                    Vector3 abProj = ab - acNorm * Vector3.Dot(ab, acNorm);
+                    Vector3 ahProj = ah - acNorm * Vector3.Dot(ah, acNorm);
+
+                    float maxReach = abLen + bcLen;
+                    if (abProj.sqrMagnitude > (maxReach * maxReach * 0.001f) && ahProj.sqrMagnitude > 0f)
+                    {
+                        Quaternion hintR = QuaternionExt.FromToRotation(abProj, ahProj);
+                        hintR = QuaternionExt.NormalizeSafe(hintR);
+                        root.SetRotation(stream, hintR * root.GetRotation(stream));
+                    }
+                }
+            }
+
+            tip.SetRotation(stream, tRotation);
         }
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public void Apply(AnimationStream stream, ReadWriteTransformHandle h, Vector3Property p, Vector4Property r, Vector4Property o, BoolProperty sw)
@@ -1308,27 +1479,36 @@ w20, w54;
                 }
             }
         }
-        public void SolveHand(AnimationStream stream, BoolProperty enabledProp, ReadWriteTransformHandle root, ReadWriteTransformHandle mid, ReadWriteTransformHandle tip,
-        Vector3Property targetPosProp, Vector4Property targetRotProp, Vector3Property hintPosProp, Vector4Property hintRotProp, BoolProperty hintWeightProp, Quaternion targetOffset,
-        ReadWriteTransformHandle chestStart, ReadWriteTransformHandle chestEnd, FloatProperty chestRadius, FloatProperty collisionSkin, BoolProperty collisionsEnabled,
-        FloatProperty handRadius, FloatProperty handSkin, BoolProperty useHandCapsule, BoolProperty protectElbow)
+        public void SolveHandStable(
+    AnimationStream stream,
+    BoolProperty enabledProp, ReadWriteTransformHandle root, ReadWriteTransformHandle mid, ReadWriteTransformHandle tip,
+    Vector3Property targetPosProp, Vector4Property targetRotProp,
+    Vector3Property hintPosProp, Vector4Property hintRotProp,
+    bool useHint,
+    Quaternion targetOffset,
+    ReadWriteTransformHandle chestStart, ReadWriteTransformHandle chestEnd, FloatProperty chestRadius, FloatProperty collisionSkin, BoolProperty collisionsEnabled,
+    FloatProperty handRadius, FloatProperty handSkin, BoolProperty useHandCapsule, BoolProperty protectElbow,
+    Vector3 bendNormal
+)
         {
-            if (!enabledProp.Get(stream))
-            {
-                Pass(stream, root, mid, tip);
-                return;
-            }
-            if (!(root.IsValid(stream) && mid.IsValid(stream) && tip.IsValid(stream)))
+            if (!enabledProp.Get(stream) || !(root.IsValid(stream) && mid.IsValid(stream) && tip.IsValid(stream)))
             {
                 Pass(stream, root, mid, tip);
                 return;
             }
 
-            // Read inputs
+            Vector3 aPos = root.GetPosition(stream);
+            Vector3 bPos = mid.GetPosition(stream);
+            Vector3 cPos = tip.GetPosition(stream);
+
+            float abLen = (bPos - aPos).magnitude;
+            float bcLen = (cPos - bPos).magnitude;
+
             Vector3 tgtPos = targetPosProp.Get(stream);
             Quaternion tgtRot = V4ToQuat(targetRotProp.Get(stream));
             Vector3 hintPos = hintPosProp.Get(stream);
             Quaternion hintRot = V4ToQuat(hintRotProp.Get(stream));
+
             bool doCollisions = collisionsEnabled.Get(stream) && chestStart.IsValid(stream) && chestEnd.IsValid(stream);
             if (doCollisions)
             {
@@ -1339,17 +1519,14 @@ w20, w54;
                 if (useHandCapsule.Get(stream))
                 {
                     float hRad = Mathf.Max(0f, handRadius.Get(stream) + handSkin.Get(stream));
-
-                    // Use the actual current mid & tip positions as the hand capsule ends
                     Vector3 handA = mid.GetPosition(stream);
                     Vector3 handB = tip.GetPosition(stream);
 
                     Vector3 correction = CapsuleCapsuleResolve(handA, handB, hRad, a, b, chestR);
                     if (correction.sqrMagnitude > 0f)
                     {
-                        // Move the IK target & hint by the same correction
                         tgtPos += correction;
-                        hintPos += correction * 0.25f; // steer elbow slightly
+                        hintPos += correction * 0.25f;
                     }
                 }
                 else
@@ -1359,11 +1536,15 @@ w20, w54;
                     hintPos = Vector3.Lerp(hintPos, nudgedHint, 0.6f);
                 }
             }
+
+            // Reach clamp BEFORE solve
+            tgtPos = ClampTargetToReach(aPos, tgtPos, abLen, bcLen);
+
             var target = new AffineTransform(tgtPos, tgtRot);
             var hint = new AffineTransform(hintPos, hintRot);
-            // First solve (arms variant to preserve wrist)
-            SolveTwoBoneIKArms(stream, root, mid, tip, target, hint, hintWeightProp.Get(stream), targetOffset);
-            // Optional elbow protection pass
+
+            SolveTwoBoneIKArmsStable(stream, root, mid, tip, target, hint, useHint, targetOffset, bendNormal);
+
             if (protectElbow.Get(stream) && doCollisions)
             {
                 Vector3 a = chestStart.GetPosition(stream);
@@ -1375,10 +1556,99 @@ w20, w54;
                 if ((pushedB - B).sqrMagnitude > 1e-10f)
                 {
                     SwingElbowAroundAC(stream, root, mid, tip, pushedB);
-                    // Re-lock wrist to target after elbow swing
-                    SolveTwoBoneIKArms(stream, root, mid, tip, target, hint, hintWeightProp.Get(stream), targetOffset);
+                    SolveTwoBoneIKArmsStable(stream, root, mid, tip, target, hint, useHint, targetOffset, bendNormal);
                 }
             }
+        }
+        public void SolveTwoBoneIKArmsStable(
+                   AnimationStream stream,
+                   ReadWriteTransformHandle root,
+                   ReadWriteTransformHandle mid,
+                   ReadWriteTransformHandle tip,
+                   AffineTransform target,
+                   AffineTransform hint,
+                   bool useHint,
+                   Quaternion targetOffset,
+                   Vector3 bendNormal
+               )
+        {
+            Vector3 aPosition = root.GetPosition(stream);
+            Vector3 bPosition = mid.GetPosition(stream);
+            Vector3 cPosition = tip.GetPosition(stream);
+
+            Vector3 tPosition = target.translation;
+            Quaternion tRotation = target.rotation * targetOffset;
+
+            Vector3 ab = bPosition - aPosition;
+            Vector3 bc = cPosition - bPosition;
+            Vector3 ac = cPosition - aPosition;
+
+            float abLen = ab.magnitude;
+            float bcLen = bc.magnitude;
+            float acLen = ac.magnitude;
+
+            // Reach clamp
+            tPosition = ClampTargetToReach(aPosition, tPosition, abLen, bcLen);
+
+            Vector3 atCorrected = tPosition - aPosition;
+            float atCorrectedLen = atCorrected.magnitude;
+
+            float oldAbcAngle = TriangleAngle(acLen, abLen, bcLen);
+            float newAbcAngle = TriangleAngle(atCorrectedLen, abLen, bcLen);
+
+            Vector3 axisFromPose = Vector3.Cross(ab, bc);
+            Vector3 axisFromHint = useHint ? Vector3.Cross(hint.translation - aPosition, bc) : Vector3.zero;
+
+            Vector3 axis = axisFromPose;
+            if (axis.sqrMagnitude < k_SqrEpsilon && axisFromHint.sqrMagnitude > k_SqrEpsilon)
+                axis = axisFromHint;
+
+            if (axis.sqrMagnitude < k_SqrEpsilon)
+                axis = bendNormal;
+
+            axis = SafeNormalize(axis, Vector3.up);
+
+            float halfAngle = 0.5f * (oldAbcAngle - newAbcAngle);
+            float sin = Mathf.Sin(halfAngle);
+            float cos = Mathf.Cos(halfAngle);
+            Quaternion deltaR = new Quaternion(axis.x * sin, axis.y * sin, axis.z * sin, cos);
+            mid.SetRotation(stream, deltaR * mid.GetRotation(stream));
+
+            cPosition = tip.GetPosition(stream);
+            ac = cPosition - aPosition;
+
+            if (atCorrectedLen > k_Epsilon)
+            {
+                Quaternion rootDelta = QuaternionExt.FromToRotation(ac, atCorrected);
+                root.SetRotation(stream, rootDelta * root.GetRotation(stream));
+            }
+
+            if (useHint)
+            {
+                float acSqrMag = ac.sqrMagnitude;
+                if (acSqrMag > 0f)
+                {
+                    bPosition = mid.GetPosition(stream);
+                    cPosition = tip.GetPosition(stream);
+                    ab = bPosition - aPosition;
+                    ac = cPosition - aPosition;
+
+                    Vector3 acNorm = ac / Mathf.Sqrt(acSqrMag);
+                    Vector3 ah = hint.translation - aPosition;
+                    Vector3 abProj = ab - acNorm * Vector3.Dot(ab, acNorm);
+                    Vector3 ahProj = ah - acNorm * Vector3.Dot(ah, acNorm);
+
+                    float maxReach = abLen + bcLen;
+                    if (abProj.sqrMagnitude > (maxReach * maxReach * 0.001f) && ahProj.sqrMagnitude > 0f)
+                    {
+                        Quaternion hintR = QuaternionExt.FromToRotation(abProj, ahProj);
+                        hintR = QuaternionExt.NormalizeSafe(hintR);
+                        root.SetRotation(stream, hintR * root.GetRotation(stream));
+                    }
+                }
+            }
+
+            tip.SetRotation(stream, tRotation);
         }
         public void Pass(AnimationStream stream, ReadWriteTransformHandle root, ReadWriteTransformHandle mid, ReadWriteTransformHandle tip)
         {
@@ -1603,10 +1873,6 @@ w20, w54;
                 handSkin = FloatProperty.Bind(animator, component, data.HandSkinFloatProperty),
 
                 maxBendDeg = FloatProperty.Bind(animator, component, data.MaxBendDegFloatProperty),
-                minFactor = FloatProperty.Bind(animator, component, data.MinFactorFloatProperty),
-                maxFactor = FloatProperty.Bind(animator, component, data.MaxFactorFloatProperty),
-                struggleStart = FloatProperty.Bind(animator, component, data.StruggleStartFloatProperty),
-                struggleEnd = FloatProperty.Bind(animator, component, data.StruggleEndFloatProperty),
                 MaxChestDeltaDeg = FloatProperty.Bind(animator, component, data.MaxChestDeltaDegFloatProperty),
 
                 enabledLeftShoulder =  BoolProperty.Bind(animator, component, data.enabledLeftShoulderProperty),
@@ -1627,7 +1893,12 @@ w20, w54;
                 targetOffsetLeftHand = data.m_CalibratedRotationLeftHand,
                 targetOffsetRightHand = data.m_CalibratedRotationRightHand,
 
-                MinHeadSpineHeight = FloatProperty.Bind(animator, component, data.MinHeadSpineHeightFloatProperty)
+                MinHeadSpineHeight = FloatProperty.Bind(animator, component, data.MinHeadSpineHeightFloatProperty),
+
+                 prevBendNormalLeftLeg = Vector3Property.Bind(animator, component, data.PrevBendNormalLeftLegProperty),
+                prevBendNormalRightLeg = Vector3Property.Bind(animator, component, data.PrevBendNormalRightLegProperty),
+                prevBendNormalLeftArm = Vector3Property.Bind(animator, component, data.PrevBendNormalLeftArmProperty),
+                prevBendNormalRightArm = Vector3Property.Bind(animator, component, data.PrevBendNormalRightArmProperty),
 
             };
 
