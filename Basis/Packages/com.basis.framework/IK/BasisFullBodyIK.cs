@@ -665,6 +665,18 @@ namespace UnityEngine.Animations.Rigging
         const float k_ArmMaxForwardDeg = 150f;
         const float k_ArmMaxBackwardDeg = 60f;
 
+        const float k_SpineLinkMaxForwardDeg = 120f;
+        const float k_SpineLinkMaxBackwardDeg = 25f;
+
+        const float k_ChestLinkMaxForwardDeg = 110f;
+        const float k_ChestLinkMaxBackwardDeg = 20f;
+
+        const float k_NeckLinkMaxForwardDeg = 100f;
+        const float k_NeckLinkMaxBackwardDeg = 15f;
+
+        const float k_HeadLinkMaxForwardDeg = 120f;
+        const float k_HeadLinkMaxBackwardDeg = 20f;
+
         public ReadWriteTransformHandle HandleChest, HandleNeck, HandleHead,
   HandleLeftUpperLeg, HandleLeftLowerLeg, HandleLeftFoot,
   HandleRightUpperLeg, HandleRightLowerLeg, HandleRightFoot,
@@ -772,11 +784,36 @@ w20, w54;
                 }
             }
 
-            float restDist = MinHeadSpineHeight.Get(stream);
+            float minDist = MinHeadSpineHeight.Get(stream);
 
+            Vector3 desiredHips = EnforceMinHeadHipsDistance(headTargetPos, hipsTargetPos, minDist, WorldUP, true);
+
+            // Smooth toward the corrected position (active push)
+            float pushSpeed = 12f; // expose as FloatProperty if you want
+            float alpha = 1f - Mathf.Exp(-pushSpeed * stream.deltaTime);
+            hipsTargetPos = Vector3.Lerp(hipsTargetPos, desiredHips, alpha);
+
+            targetPositionHips.Set(stream, hipsTargetPos);
             // 1) Limit spine bend by pushing hips down if needed
             hipsTargetPos = EnforceSpineBendLimit(headTargetPos, hipsTargetPos, maxBendDeg.Get(stream), WorldUP);
 
+            hipsTargetPos = EnforceMinHeadHipsDistance(headTargetPos, hipsTargetPos, minDist, WorldUP, true);
+
+            float maxDist = minDist * 1.25f;
+
+            Quaternion hipsRot = HandleHips.IsValid(stream) ? HandleHips.GetRotation(stream) : Quaternion.identity;
+            Quaternion chestRot = HandleChest.IsValid(stream) ? HandleChest.GetRotation(stream) : hipsRot;
+            Vector3 hipsUp = hipsRot * WorldUP;
+
+            // "lying down" detector
+            float targetlyingdown = (Mathf.Abs(Vector3.Dot(hipsUp, WorldUP)) < 0.45f) ? 1f : 0f;
+            horizontal01 = Mathf.Lerp(horizontal01, targetlyingdown, 1f - Mathf.Exp(-stream.deltaTime * 10f));
+            bool isHorizontal = horizontal01 > 0.5f;
+            // If horizontal, don't pull hips toward head (this causes the bad "enforced" feel)
+            if (!isHorizontal)
+            {
+                hipsTargetPos = EnforceMaxHeadHipsDistance(headTargetPos, hipsTargetPos, maxDist);
+            }
             targetPositionHips.Set(stream, hipsTargetPos);
 
             // 3) Solve hips + spine as before
@@ -810,6 +847,23 @@ w20, w54;
                     SolveTwoBoneSpine(stream, HandleChest, HandleNeck, HandleHead, target, targetOffsetHead, bendNormal);
                 }
             }
+            if (enabledSpineIK.Get(stream))
+            {
+                // Spine relative to hips (if you actually use HandleSpine; if not valid, it just skips)
+                ClampSwingAsymmetric(stream, HandleHips, HandleSpine, k_SpineLinkMaxForwardDeg, k_SpineLinkMaxBackwardDeg);
+
+                // Chest relative to spine (fallback: hips if spine not valid)
+                if (HandleSpine.IsValid(stream))
+                    ClampSwingAsymmetric(stream, HandleSpine, HandleChest, k_ChestLinkMaxForwardDeg, k_ChestLinkMaxBackwardDeg);
+                else
+                    ClampSwingAsymmetric(stream, HandleHips, HandleChest, k_ChestLinkMaxForwardDeg, k_ChestLinkMaxBackwardDeg);
+
+                // Neck relative to chest
+                ClampSwingAsymmetric(stream, HandleChest, HandleNeck, k_NeckLinkMaxForwardDeg, k_NeckLinkMaxBackwardDeg);
+
+                // Head relative to neck
+                ClampSwingAsymmetric(stream, HandleNeck, HandleHead, k_HeadLinkMaxForwardDeg, k_HeadLinkMaxBackwardDeg);
+            }
             if (enabledLeftShoulder.Get(stream))
             {
                 ApplyRotation(stream, HandleLeftShoulder, TargetRotationLeftShoulder, targetOffsetLeftShoulder);
@@ -819,16 +873,9 @@ w20, w54;
                 ApplyRotation(stream, HandleRightShoulder, TargetRotationRightShoulder, targetOffsetRightShoulder);
             }
 
-            Quaternion hipsRot = HandleHips.IsValid(stream) ? HandleHips.GetRotation(stream) : Quaternion.identity;
-            Quaternion chestRot = HandleChest.IsValid(stream) ? HandleChest.GetRotation(stream) : hipsRot;
-            Vector3 hipsUp = hipsRot * WorldUP;
             Vector3 hipsRight = hipsRot * Vector3.right;
             Vector3 chestForward = chestRot * Vector3.forward;
 
-            // "lying down" detector
-            float targetlyingdown = (Mathf.Abs(Vector3.Dot(hipsUp, WorldUP)) < 0.45f) ? 1f : 0f;
-            horizontal01 = Mathf.Lerp(horizontal01, targetlyingdown, 1f - Mathf.Exp(-stream.deltaTime * 10f));
-            bool isHorizontal = horizontal01 > 0.5f;
 #if UNITY_EDITOR
             BasisDebug.Log($"isHorizontal {isHorizontal}");
 #endif
@@ -918,6 +965,31 @@ w20, w54;
             Apply(stream, HandleLeftToe, p19, r19, o19, w19);
             Apply(stream, HandleRightToe, p20, r20, o20, w20);
             Apply(stream, HandleUpperChest, p54, r54, o54, w54);
+        }
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        void ClampSwingAsymmetric(AnimationStream stream,
+    ReadWriteTransformHandle parent,
+    ReadWriteTransformHandle child,
+    float maxForwardDeg,
+    float maxBackwardDeg)
+        {
+            if (!parent.IsValid(stream) || !child.IsValid(stream))
+                return;
+
+            Quaternion parentRot = parent.GetRotation(stream);
+            Quaternion childRot = child.GetRotation(stream);
+
+            // NOTE: assumes bone "forward" axis is +Z. If your rig uses a different axis, change Vector3.forward.
+            Vector3 parentFwd = parentRot * Vector3.forward;
+            Vector3 parentUp = parentRot * Vector3.up;
+
+            Vector3 childFwd = childRot * Vector3.forward;
+
+            Vector3 clampedFwd = ClampDirectionAsymmetricCone(childFwd, parentFwd, parentUp, maxForwardDeg, maxBackwardDeg);
+
+            // Rotate child so its forward matches clamped forward (minimal correction)
+            Quaternion delta = QuaternionExt.FromToRotation(childFwd, clampedFwd);
+            child.SetRotation(stream, delta * childRot);
         }
         static Vector3 EnforceSpineBendLimit(Vector3 headPos, Vector3 hipsPos, float maxBendDeg, Vector3 up)
         {
@@ -1694,8 +1766,61 @@ w20, w54;
 
             return SafeNormalize(clamped, forward);
         }
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        static Vector3 EnforceMaxHeadHipsDistance(Vector3 headPos, Vector3 hipsPos, float maxDist)
+        {
+            if (maxDist <= 0f) return hipsPos;
+
+            Vector3 d = hipsPos - headPos;
+            float dist = d.magnitude;
+            if (dist <= maxDist || dist < 1e-6f) return hipsPos;
+
+            return headPos + d * (maxDist / dist);
+        }
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        static Vector3 EnforceMinHeadHipsDistance(
+    Vector3 headPos,
+    Vector3 hipsPos,
+    float minDist,
+    Vector3 worldUp,
+    bool preferDown = true
+)
+        {
+            if (minDist <= 0f) return hipsPos;
+
+            Vector3 d = hipsPos - headPos;
+            float dsq = d.sqrMagnitude;
+            float minSq = minDist * minDist;
+
+            if (dsq >= minSq) return hipsPos;
+
+            // If basically coincident, pick a deterministic direction.
+            Vector3 dir;
+            if (dsq > 1e-10f)
+            {
+                dir = d / Mathf.Sqrt(dsq);
+            }
+            else
+            {
+                // Default: push hips downward away from head
+                dir = preferDown ? -worldUp : worldUp;
+            }
+
+            // Bias toward pushing "down" (more natural) unless the direction is unusable.
+            if (preferDown)
+            {
+                // Blend toward down to reduce sideways snapping.
+                Vector3 down = -worldUp;
+                // If dir is almost opposite down, keep dir (avoid flipping).
+                float dot = Vector3.Dot(dir, down);
+                float t = Mathf.Clamp01((dot + 1f) * 0.5f); // map [-1..1] to [0..1]
+                dir = SafeNormalize(Vector3.Lerp(dir, down, t), down);
+            }
+
+            return headPos + dir * minDist;
+        }
     }
-    public class BasisFullBodyJobBinder : AnimationJobBinder<BasisFullIKConstraintJob, BasisFullBodyData>
+        public class BasisFullBodyJobBinder : AnimationJobBinder<BasisFullIKConstraintJob, BasisFullBodyData>
     {
         public override BasisFullIKConstraintJob Create(Animator animator, ref BasisFullBodyData data, Component component)
         {
