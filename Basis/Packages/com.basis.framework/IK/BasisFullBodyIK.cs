@@ -618,23 +618,20 @@ namespace UnityEngine.Animations.Rigging
         const float k_SqrEpsilon = 1e-8f;
         const float k_MaxForwardDeg = 120f;
         const float k_MaxBackwardDeg = 25;
-
-        const float k_SpineMaxForwardDeg = 140f;
-        const float k_SpineMaxBackwardDeg = 35f;
         const float k_ArmMaxForwardDeg = 150f;
         const float k_ArmMaxBackwardDeg = 60f;
 
-        const float k_SpineLinkMaxForwardDeg = 120f;
-        const float k_SpineLinkMaxBackwardDeg = 25f;
+        const float k_SpineMaxForwardDeg = 170f;
+        const float k_SpineMaxBackwardDeg = 45f;
 
-        const float k_ChestLinkMaxForwardDeg = 110f;
-        const float k_ChestLinkMaxBackwardDeg = 20f;
+        const float k_SpineLinkMaxForwardDeg = 140f;
+        const float k_SpineLinkMaxBackwardDeg = 45f;
 
-        const float k_NeckLinkMaxForwardDeg = 100f;
-        const float k_NeckLinkMaxBackwardDeg = 15f;
+        const float k_ChestLinkMaxForwardDeg = 140f;
+        const float k_ChestLinkMaxBackwardDeg = 40f;
 
-        const float k_HeadLinkMaxForwardDeg = 120f;
-        const float k_HeadLinkMaxBackwardDeg = 20f;
+        const float k_NeckLinkMaxForwardDeg = 140f;
+        const float k_NeckLinkMaxBackwardDeg = 45f;
 
         const float k_Epsilon = 1e-5f; // or 0.00001f
         const float k_MinMag = 1e-6f;
@@ -723,7 +720,7 @@ w20, w54;
                 Quaternion hipRot = HandleHips.GetRotation(stream);
 
                 Vector3 hipForward = hipRot * Vector3.forward;
-                Vector3 hipUp = hipRot * Vector3.up;
+                Vector3 hipUp = hipRot * WorldUP;
 
                 Vector3 toHead = headTargetPos - hipsTargetPos;
                 float dist = toHead.magnitude;
@@ -738,10 +735,10 @@ w20, w54;
                 }
             }
             // 1) Limit spine bend by pushing hips down if needed
-            hipsTargetPos = EnforceSpineBendLimit(headTargetPos, hipsTargetPos, MaxBlend, WorldUP);
+         //   hipsTargetPos = EnforceSpineBendLimit(headTargetPos, hipsTargetPos, MaxBlend, WorldUP);
 
-            float MinRange = MinHeadSpineHeight.Get(stream);
-            float maxDist = MinRange * 1.25f;
+          //  float MinRange = MinHeadSpineHeight.Get(stream);
+         //   float maxDist = MinRange * 1.25f;
 
             Quaternion hipsRot = HandleHips.IsValid(stream) ? HandleHips.GetRotation(stream) : Quaternion.identity;
             Quaternion chestRot = HandleChest.IsValid(stream) ? HandleChest.GetRotation(stream) : hipsRot;
@@ -751,6 +748,7 @@ w20, w54;
             float targetlyingdown = (Mathf.Abs(Vector3.Dot(hipsUp, WorldUP)) < 0.45f) ? 1f : 0f;
             horizontal01 = Mathf.Lerp(horizontal01, targetlyingdown, 1f - Mathf.Exp(-stream.deltaTime * 10f));
             bool isHorizontal = horizontal01 > 0.5f;
+
             // 3) Solve hips + spine as before
             SolveHipsAndSpine(stream, hipsTargetPos, targetRotationHips, offsetRotationHips, enabledSpineIK, HandleHips, HandleChest, HandleNeck, HandleHead, targetPositionHead, targetRotationHead, targetOffsetHead, bendNormalHead);
 
@@ -799,9 +797,6 @@ w20, w54;
 
                 // Neck relative to chest
                 ClampSwingAsymmetric(stream, HandleChest, HandleNeck, k_NeckLinkMaxForwardDeg, k_NeckLinkMaxBackwardDeg);
-
-                // Head relative to neck
-                ClampSwingAsymmetric(stream, HandleNeck, HandleHead, k_HeadLinkMaxForwardDeg, k_HeadLinkMaxBackwardDeg);
             }
             if (enabledLeftShoulder.Get(stream))
             {
@@ -814,10 +809,6 @@ w20, w54;
 
             Vector3 hipsRight = hipsRot * Vector3.right;
             Vector3 chestForward = chestRot * Vector3.forward;
-
-#if UNITY_EDITOR
-            // BasisDebug.Log($"isHorizontal {isHorizontal}");
-#endif
             // body-based knee normals (left bends ~-right, right bends ~+right)
             Vector3 kneeNormalLeft = -hipsRight;
             Vector3 kneeNormalRight = hipsRight;
