@@ -657,6 +657,14 @@ namespace UnityEngine.Animations.Rigging
     public struct BasisFullIKConstraintJob : IWeightedAnimationJob
     {
         const float k_SqrEpsilon = 1e-8f;
+        const float k_MaxForwardDeg = 120f;
+        const float k_MaxBackwardDeg = 25;
+
+        const float k_SpineMaxForwardDeg = 140f;
+        const float k_SpineMaxBackwardDeg = 35f;
+        const float k_ArmMaxForwardDeg = 150f;
+        const float k_ArmMaxBackwardDeg = 60f;
+
         public ReadWriteTransformHandle HandleChest, HandleNeck, HandleHead,
   HandleLeftUpperLeg, HandleLeftLowerLeg, HandleLeftFoot,
   HandleRightUpperLeg, HandleRightLowerLeg, HandleRightFoot,
@@ -743,6 +751,27 @@ w20, w54;
             Vector3 headTargetPos = targetPositionHead.Get(stream);
             Vector3 hipsTargetPos = targetPositionHips.Get(stream);
 
+            if (HandleHips.IsValid(stream))
+            {
+                Vector3 hipPos = hipsTargetPos; // already read from property
+                Quaternion hipRot = HandleHips.GetRotation(stream);
+
+                Vector3 hipForward = hipRot * Vector3.forward;
+                Vector3 hipUp = hipRot * Vector3.up;
+
+                Vector3 toHead = headTargetPos - hipPos;
+                float dist = toHead.magnitude;
+                if (dist > 1e-6f)
+                {
+                    Vector3 dir = toHead / dist;
+                    dir = ClampDirectionAsymmetricCone(dir, hipForward, hipUp, k_SpineMaxForwardDeg, k_SpineMaxBackwardDeg);
+                    headTargetPos = hipPos + dir * dist;
+
+                    // write back so downstream spine solve uses clamped target
+                    targetPositionHead.Set(stream, headTargetPos);
+                }
+            }
+
             float restDist = MinHeadSpineHeight.Get(stream);
 
             // 1) Limit spine bend by pushing hips down if needed
@@ -751,7 +780,7 @@ w20, w54;
             targetPositionHips.Set(stream, hipsTargetPos);
 
             // 3) Solve hips + spine as before
-            SolveHipsAndSpine(stream,targetPositionHips, targetRotationHips, offsetRotationHips, enabledSpineIK,HandleHips, HandleChest, HandleNeck, HandleHead,targetPositionHead, targetRotationHead, targetOffsetHead, bendNormalHead);
+            SolveHipsAndSpine(stream, targetPositionHips, targetRotationHips, offsetRotationHips, enabledSpineIK, HandleHips, HandleChest, HandleNeck, HandleHead, targetPositionHead, targetRotationHead, targetOffsetHead, bendNormalHead);
 
             if (hintWeightHead.Get(stream))
             {
@@ -807,8 +836,8 @@ w20, w54;
             Vector3 kneeNormalLeft = -hipsRight;
             Vector3 kneeNormalRight = hipsRight;
 
-             kneeNormalLeft  = BlendNormals(kneeNormalLeft,  prevBendNormalLeftLeg.Get(stream),  isHorizontal ? 0.75f : 0.25f);
-             kneeNormalRight = BlendNormals(kneeNormalRight, prevBendNormalRightLeg.Get(stream), isHorizontal ? 0.75f : 0.25f);
+            kneeNormalLeft = BlendNormals(kneeNormalLeft, prevBendNormalLeftLeg.Get(stream), isHorizontal ? 0.75f : 0.25f);
+            kneeNormalRight = BlendNormals(kneeNormalRight, prevBendNormalRightLeg.Get(stream), isHorizontal ? 0.75f : 0.25f);
 
             // Disable hint influence when horizontal (prevents tracker-roll flips)
             bool useHintLeft = hintWeightLeftLowerLeg.Get(stream) && !isHorizontal;
@@ -817,7 +846,7 @@ w20, w54;
             prevBendNormalLeftLeg.Set(stream, kneeNormalLeft);
             prevBendNormalRightLeg.Set(stream, kneeNormalRight);
 
-            SolveLegsStable(stream, enabledLeftLowerLeg,
+            SolveLegs(stream, enabledLeftLowerLeg,
                 HandleLeftUpperLeg, HandleLeftLowerLeg, HandleLeftFoot,
                 targetPositionLeftLowerLeg, targetRotationLeftLowerLeg,
                 hintPositionLeftLowerLeg, hintRotationLeftLowerLeg,
@@ -825,7 +854,7 @@ w20, w54;
                 targetOffsetLeftFoot,
                 kneeNormalLeft);
 
-            SolveLegsStable(stream, enabledRightLowerLeg,
+            SolveLegs(stream, enabledRightLowerLeg,
                 HandleRightUpperLeg, HandleRightLowerLeg, HandleRightFoot,
                 targetPositionRightLowerLeg, targetRotationRightLowerLeg,
                 hintPositionRightLowerLeg, hintRotationRightLowerLeg,
@@ -845,7 +874,7 @@ w20, w54;
             prevBendNormalLeftArm.Set(stream, elbowNormalLeft);
             prevBendNormalRightArm.Set(stream, elbowNormalRight);
 
-            SolveHandStable(stream,
+            SolveHand(stream,
                     enabledLeftHand, HandleLeftUpperArm, HandleLeftLowerArm, HandleLeftHand,
                     targetPositionLeftHand, targetRotationLeftHand, hintPositionLeftHand, hintRotationLeftHand,
                     hintWeightLeftHand.Get(stream) && !isHorizontal,
@@ -854,7 +883,7 @@ w20, w54;
                     handRadius, handSkin, useHandCapsule, protectElbow,
                     elbowNormalLeft, WorldUP);
 
-            SolveHandStable(stream,
+            SolveHand(stream,
                 enabledRightHand, HandleRightUpperArm, HandleRightLowerArm, HandleRightHand,
                 targetPositionRightHand, targetRotationRightHand, hintPositionRightHand, hintRotationRightHand,
                 hintWeightRightHand.Get(stream) && !isHorizontal,
@@ -1044,7 +1073,7 @@ w20, w54;
             c1 = p1 + d1 * s;
             c2 = p2 + d2 * t;
         }
-        public static Vector3 CapsuleCapsuleResolve(Vector3 p1, Vector3 q1, float r1, Vector3 p2, Vector3 q2, float r2,Vector3 Up)
+        public static Vector3 CapsuleCapsuleResolve(Vector3 p1, Vector3 q1, float r1, Vector3 p2, Vector3 q2, float r2, Vector3 Up)
         {
             SegmentSegmentClosestPoints(p1, q1, p2, q2, out _, out _, out var c1, out var c2);
             Vector3 n = c1 - c2;
@@ -1108,7 +1137,7 @@ w20, w54;
             handle.GetLocalTRS(stream, out Vector3 position, out Quaternion rotation, out Vector3 scale);
             handle.SetLocalTRS(stream, position, rotation, scale);
         }
-        public static Vector3 PushOutFromCapsule(Vector3 p, Vector3 a, Vector3 b, float radiusWithSkin,Vector3 FallBackUp)
+        public static Vector3 PushOutFromCapsule(Vector3 p, Vector3 a, Vector3 b, float radiusWithSkin, Vector3 FallBackUp)
         {
             Vector3 q = ClosestPointOnSegment(p, a, b);
             Vector3 qp = p - q;
@@ -1121,16 +1150,16 @@ w20, w54;
 
         public Quaternion V4ToQuat(Vector4 v) => new Quaternion(v.x, v.y, v.z, v.w);
 
-        public void SolveLegsStable(
-    AnimationStream stream,
-    BoolProperty enabledProp,
-    ReadWriteTransformHandle root, ReadWriteTransformHandle mid, ReadWriteTransformHandle tip,
-    Vector3Property targetPosProp, Vector4Property targetRotProp,
-    Vector3Property hintPosProp, Vector4Property hintRotProp,
-    bool useHint,
-    Quaternion targetOffset,
-    Vector3 bendNormal
-)
+        public void SolveLegs(
+            AnimationStream stream,
+            BoolProperty enabledProp,
+            ReadWriteTransformHandle root, ReadWriteTransformHandle mid, ReadWriteTransformHandle tip,
+            Vector3Property targetPosProp, Vector4Property targetRotProp,
+            Vector3Property hintPosProp, Vector4Property hintRotProp,
+            bool useHint,
+            Quaternion targetOffset,
+            Vector3 bendNormal
+        )
         {
             if (!enabledProp.Get(stream) || !(root.IsValid(stream) && mid.IsValid(stream) && tip.IsValid(stream)))
             {
@@ -1146,6 +1175,29 @@ w20, w54;
             float bcLen = (cPos - bPos).magnitude;
 
             Vector3 tPos = targetPosProp.Get(stream);
+
+            // --- NEW: clamp leg target relative to hips so the foot cannot go "behind" the body beyond limits ---
+            if (HandleHips.IsValid(stream))
+            {
+                Vector3 hipPos = HandleHips.GetPosition(stream);
+                Quaternion hipRot = HandleHips.GetRotation(stream);
+
+                Vector3 hipForward = hipRot * Vector3.forward;
+                Vector3 hipUp = hipRot * Vector3.up;
+
+                Vector3 toT = tPos - hipPos;
+                float dist = toT.magnitude;
+
+                if (dist > 1e-6f)
+                {
+                    Vector3 dir = toT / dist;
+
+                    dir = ClampDirectionAsymmetricCone(dir, hipForward, hipUp, k_MaxForwardDeg, k_MaxBackwardDeg);
+                    tPos = hipPos + dir * dist;
+                }
+            }
+
+            // Reach clamp AFTER human-limit clamp
             tPos = ClampTargetToReach(aPos, tPos, abLen, bcLen);
 
             Quaternion tRot = V4ToQuat(targetRotProp.Get(stream));
@@ -1157,6 +1209,7 @@ w20, w54;
 
             SolveTwoBoneStable(stream, root, mid, tip, target, hint, useHint, targetOffset, bendNormal);
         }
+
         public void SolveTwoBoneStable(
            AnimationStream stream,
            ReadWriteTransformHandle root,
@@ -1270,7 +1323,7 @@ w20, w54;
                 }
             }
         }
-        public void SolveHandStable(
+        public void SolveHand(
     AnimationStream stream,
     BoolProperty enabledProp, ReadWriteTransformHandle root, ReadWriteTransformHandle mid, ReadWriteTransformHandle tip,
     Vector3Property targetPosProp, Vector4Property targetRotProp,
@@ -1279,7 +1332,7 @@ w20, w54;
     Quaternion targetOffset,
     ReadWriteTransformHandle chestStart, ReadWriteTransformHandle chestEnd, FloatProperty chestRadius, FloatProperty collisionSkin, BoolProperty collisionsEnabled,
     FloatProperty handRadius, FloatProperty handSkin, BoolProperty useHandCapsule, BoolProperty protectElbow,
-    Vector3 bendNormal,Vector3 up
+    Vector3 bendNormal, Vector3 up
 )
         {
             if (!enabledProp.Get(stream) || !(root.IsValid(stream) && mid.IsValid(stream) && tip.IsValid(stream)))
@@ -1299,6 +1352,41 @@ w20, w54;
             Quaternion tgtRot = V4ToQuat(targetRotProp.Get(stream));
             Vector3 hintPos = hintPosProp.Get(stream);
             Quaternion hintRot = V4ToQuat(hintRotProp.Get(stream));
+
+            if (HandleChest.IsValid(stream))
+            {
+                Vector3 chestPos = HandleChest.GetPosition(stream);
+                Quaternion chestRot = HandleChest.GetRotation(stream);
+
+                Vector3 chestForward = chestRot * Vector3.forward;
+                Vector3 chestUp = chestRot * Vector3.up;
+
+                // target
+                {
+                    Vector3 toT = tgtPos - chestPos;
+                    float d = toT.magnitude;
+                    if (d > 1e-6f)
+                    {
+                        Vector3 dir = toT / d;
+                        dir = ClampDirectionAsymmetricCone(dir, chestForward, chestUp, k_ArmMaxForwardDeg, k_ArmMaxBackwardDeg);
+                        tgtPos = chestPos + dir * d;
+                    }
+                }
+
+                // hint (clamp a bit looser, or same — here same)
+                {
+                    Vector3 toH = hintPos - chestPos;
+                    float d = toH.magnitude;
+                    if (d > 1e-6f)
+                    {
+                        Vector3 dir = toH / d;
+                        dir = ClampDirectionAsymmetricCone(dir, chestForward, chestUp, k_ArmMaxForwardDeg, k_ArmMaxBackwardDeg);
+                        hintPos = chestPos + dir * d;
+                    }
+                }
+
+                // Write back into locals (we already use locals later)
+            }
 
             bool doCollisions = collisionsEnabled.Get(stream) && chestStart.IsValid(stream) && chestEnd.IsValid(stream);
             if (doCollisions)
@@ -1322,8 +1410,8 @@ w20, w54;
                 }
                 else
                 {
-                    tgtPos = PushOutFromCapsule(tgtPos, a, b, chestR,up);
-                    Vector3 nudgedHint = PushOutFromCapsule(hintPos, a, b, chestR * 0.9f,up);
+                    tgtPos = PushOutFromCapsule(tgtPos, a, b, chestR, up);
+                    Vector3 nudgedHint = PushOutFromCapsule(hintPos, a, b, chestR * 0.9f, up);
                     hintPos = Vector3.Lerp(hintPos, nudgedHint, 0.6f);
                 }
             }
@@ -1360,7 +1448,7 @@ w20, w54;
                    AffineTransform hint,
                    bool useHint,
                    Quaternion targetOffset,
-                   Vector3 bendNormal,Vector3 Up
+                   Vector3 bendNormal, Vector3 Up
                )
         {
             Vector3 aPosition = root.GetPosition(stream);
@@ -1462,7 +1550,7 @@ w20, w54;
 
             // Validate required upper chain handles (Burst-safe: no params/arrays)
 
-           bool IsValid = HandleChest.IsValid(stream) & HandleNeck.IsValid(stream) & HandleHead.IsValid(stream);
+            bool IsValid = HandleChest.IsValid(stream) & HandleNeck.IsValid(stream) & HandleHead.IsValid(stream);
 
             if (!IsValid)
             {
@@ -1555,6 +1643,56 @@ w20, w54;
             }
 
             return axis / Mathf.Sqrt(mag2);
+        }
+        public static Vector3 ClampDirectionAsymmetricCone(
+            Vector3 dir,
+            Vector3 forward,
+            Vector3 up,
+            float maxForwardDeg,
+            float maxBackwardDeg
+        )
+        {
+            dir = SafeNormalize(dir, forward);
+            forward = SafeNormalize(forward, Vector3.forward);
+            up = SafeNormalize(up, Vector3.up);
+
+            float dotF = Mathf.Clamp(Vector3.Dot(forward, dir), -1f, 1f);
+
+            // Allowed angle depends on whether we're generally forward or behind.
+            // If behind (dotF < 0), we allow only (90 + maxBackwardDeg) away from forward.
+            float allowed = (dotF >= 0f) ? maxForwardDeg : (90f + maxBackwardDeg);
+
+            float angle = Mathf.Acos(dotF) * Mathf.Rad2Deg;
+            if (angle <= allowed) return dir;
+
+            // Axis for rotating dir toward forward
+            Vector3 axis = Vector3.Cross(dir, forward);
+            if (axis.sqrMagnitude < 1e-8f)
+            {
+                // Degenerate: pick something perpendicular to forward using up
+                axis = Vector3.Cross(up, forward);
+                if (axis.sqrMagnitude < 1e-8f)
+                    axis = Vector3.Cross(Vector3.right, forward);
+            }
+            axis = SafeNormalize(axis, Vector3.up);
+
+            // Rotate *dir* toward *forward* by (angle - allowed)
+            float delta = angle - allowed;
+
+            // We want a rotation that reduces the angle to forward.
+            // Rotate around axis in the direction that moves dir toward forward.
+            Quaternion q = Quaternion.AngleAxis(delta, axis);
+
+            Vector3 clamped = q * dir;
+
+            // If we rotated the wrong way (rare but possible if axis sign is off), flip axis.
+            if (Vector3.Angle(forward, clamped) > allowed + 0.01f)
+            {
+                q = Quaternion.AngleAxis(delta, -axis);
+                clamped = q * dir;
+            }
+
+            return SafeNormalize(clamped, forward);
         }
     }
     public class BasisFullBodyJobBinder : AnimationJobBinder<BasisFullIKConstraintJob, BasisFullBodyData>
