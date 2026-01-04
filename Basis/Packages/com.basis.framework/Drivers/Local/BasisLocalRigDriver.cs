@@ -846,10 +846,10 @@ namespace Basis.Scripts.Drivers
                 data.SetTargetRotation(slot, t.rotation);
             }
             //   float Distance = Vector3.Distance(BasisLocalBoneDriver.HeadControl.TposeLocalScaled.position, BasisLocalBoneDriver.HipsControl.TposeLocalScaled.position);
-            data.maxBendDeg = 90;
+            data.SpineBendmaxBendDeg = 90;
+            data.ClampedmaxChestDelta = 90;
             // data.minFactor = 1f;//Distance ;
             //  data.maxFactor = 2f;//Distance * 1.4f;
-            data.maxChestDelta = 90;
 
             BasisFullIKConstraint.data = data;
         }

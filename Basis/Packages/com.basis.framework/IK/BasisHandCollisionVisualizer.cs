@@ -76,7 +76,7 @@ public class BasisHandCollisionVisualizer : MonoBehaviour
             // Compute collision the same way SolveHand does
             Vector3 correction = BasisFullIKConstraintJob.CapsuleCapsuleResolve(
                 hsLocal, heLocal, handR,
-                chestA, chestB, chestR
+                chestA, chestB, chestR,Vector3.up
             );
 
             if (correction.sqrMagnitude > 0f)
@@ -101,7 +101,7 @@ public class BasisHandCollisionVisualizer : MonoBehaviour
         {
             // Point-vs-capsule path (PushOutFromCapsule)
             Vector3 p = tgtPos;
-            Vector3 pushed = BasisFullIKConstraintJob.PushOutFromCapsule(p, chestA, chestB, chestR);
+            Vector3 pushed = BasisFullIKConstraintJob.PushOutFromCapsule(p, chestA, chestB, chestR, Vector3.up);
 
             // Draw original + pushed positions
             Gizmos.color = handColor;
