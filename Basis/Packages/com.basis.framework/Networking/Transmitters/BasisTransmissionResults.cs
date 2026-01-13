@@ -49,9 +49,6 @@ public partial class BasisTransmissionResults
     private JobHandle _recipientsJobHandle;
     private bool _recipientsJobScheduled;
 
-    // Optional: avoid allocations for VRM.Users
-    private ushort[] _usersManagedBuffer;
-
     // ---------------------------
     // Called each frame
     // ---------------------------
@@ -197,40 +194,25 @@ public partial class BasisTransmissionResults
 
         // Change detection: no change => don't allocate/serialize/send
         if (newCount == _lastUsersCount && newHash == _lastUsersHash)
+        {
             return;
+        }
 
         _lastUsersCount = newCount;
         _lastUsersHash = newHash;
 
-        // Copy recipients into managed buffer for your message type
-        EnsureManagedUsersBuffer(newCount);
-        for (int i = 0; i < newCount; i++)
-            _usersManagedBuffer[i] = _outUsers[i];
-
-        // If VoiceReceiversMessage expects exact-length array, make a trimmed one.
-        // To avoid allocations, you can modify VoiceReceiversMessage to serialize count+buffer.
-        // Here we allocate only when changed (still much better than every tick).
         var exact = new ushort[newCount];
-        Array.Copy(_usersManagedBuffer, exact, newCount);
+        NativeArray<ushort>.Copy(_outUsers, 0, exact, 0, newCount);
 
         VRM.Users = exact;
 
         VRMWriter.Reset();
         VRM.Serialize(VRMWriter);
 
-        BasisNetworkConnection.LocalPlayerPeer.Send(
-            VRMWriter,
-            BasisNetworkCommons.AudioRecipientsChannel,
-            DeliveryMethod.ReliableOrdered
-        );
+        BasisNetworkConnection.LocalPlayerPeer.Send(VRMWriter,BasisNetworkCommons.AudioRecipientsChannel,DeliveryMethod.ReliableOrdered);
 
         BasisNetworkProfiler.AddToCounter(BasisNetworkProfilerCounter.AudioRecipients, VRMWriter.Length);
     }
-
-    // ---------------------------
-    // Internal helpers
-    // ---------------------------
-
     private void EnsureCapacity(int receiverCount)
     {
         // If user didn't call InitializeJobBuffers, do a safe default init
@@ -256,13 +238,6 @@ public partial class BasisTransmissionResults
 
         // _outCount/_outHash are size 1 and don't need resizing
     }
-
-    private void EnsureManagedUsersBuffer(int count)
-    {
-        if (_usersManagedBuffer == null || _usersManagedBuffer.Length < count)
-            _usersManagedBuffer = new ushort[NextPow2(Mathf.Max(1, count))];
-    }
-
     private static int NextPow2(int v)
     {
         v = Mathf.Max(1, v);
