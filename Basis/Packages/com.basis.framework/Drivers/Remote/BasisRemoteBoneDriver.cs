@@ -209,6 +209,7 @@ public struct BasisRemoteBoneJob : IJobParallelFor
 public struct BasisDistanceJob : IJob
 {
     [ReadOnly] public NativeArray<RemoteFrameOutput> DistancesInput;
+
     [ReadOnly] public NativeArray<bool> PrevInMicrophoneRange;
     [ReadOnly] public NativeArray<bool> PrevInHearingRange;
     [ReadOnly] public NativeArray<bool> PrevInAvatarRange;
@@ -217,32 +218,41 @@ public struct BasisDistanceJob : IJob
     [WriteOnly] public NativeArray<bool> hearingRange;
     [WriteOnly] public NativeArray<bool> AvatarRange;
     [WriteOnly] public NativeArray<float> SMD;
+
+    // Enter thresholds (SQUARED)
     public float VoiceEnterSq;
-    public float VoiceExitSq;
-
     public float HearingEnterSq;
-    public float HearingExitSq;
-
     public float AvatarEnterSq;
-    public float AvatarExitSq;
+
     public void Execute()
     {
         float smallestDistance = float.PositiveInfinity;
+
+        // Compute exit thresholds once
+        float voiceExitSq = VoiceEnterSq * 1.10f;
+        float hearingExitSq = HearingEnterSq * 1.10f;
+        float avatarExitSq = AvatarEnterSq * 1.10f;
+
         int length = DistancesInput.Length;
 
         for (int i = 0; i < length; i++)
         {
             float d2 = DistancesInput[i].SquaredDistance;
 
-            bool prevVoice = PrevInMicrophoneRange[i];
-            bool prevHearing = PrevInHearingRange[i];
-            bool prevAvatar = PrevInAvatarRange[i];
+            bool voice =
+                PrevInMicrophoneRange[i]
+                    ? d2 < voiceExitSq
+                    : d2 < VoiceEnterSq;
 
-            bool voice = prevVoice ? d2 < VoiceExitSq : d2 < VoiceEnterSq;
+            bool hearing =
+                PrevInHearingRange[i]
+                    ? d2 < hearingExitSq
+                    : d2 < HearingEnterSq;
 
-            bool hearing = prevHearing ? d2 < HearingExitSq: d2 < HearingEnterSq;
-
-            bool avatar = prevAvatar ? d2 < AvatarExitSq : d2 < AvatarEnterSq;
+            bool avatar =
+                PrevInAvatarRange[i]
+                    ? d2 < avatarExitSq
+                    : d2 < AvatarEnterSq;
 
             MicrophoneRange[i] = voice;
             hearingRange[i] = hearing;
@@ -857,13 +867,8 @@ public static class RemoteBoneJobSystem
             DistancesInput = sOut.AsDeferredJobArray(),
 
             AvatarEnterSq = SMModuleDistanceBasedReductions.AvatarRange,
-            AvatarExitSq = SMModuleDistanceBasedReductions.AvatarRange * 1.10f,
-
             HearingEnterSq = SMModuleDistanceBasedReductions.HearingRange,
-            HearingExitSq = SMModuleDistanceBasedReductions.HearingRange * 1.10f,
-
             VoiceEnterSq = SMModuleDistanceBasedReductions.MicrophoneRange,
-            VoiceExitSq = SMModuleDistanceBasedReductions.MicrophoneRange * 1.10f,
 
             SMD = SMD,
 

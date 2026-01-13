@@ -47,7 +47,9 @@ public partial class BasisTransmissionResults
         float previousInterval = intervalSeconds;
 
         if (!TryGetLocalAvatar(previousInterval, out BasisAvatar avatar))
+        {
             return;
+        }
 
         int receiverCount = BasisNetworkPlayers.ReceiverCount;
         var snapshot = BasisNetworkPlayers.ReceiversSnapshot;
@@ -55,7 +57,9 @@ public partial class BasisTransmissionResults
         BasisNetworkAvatarCompressor.Compress(BasisNetworkTransmitter, avatar.Animator);
 
         if (!TryRefreshDistanceAndChangeFlags())
+        {
             return;
+        }
 
         UpdateHearing(snapshot, receiverCount);
 
