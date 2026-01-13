@@ -38,7 +38,6 @@ namespace Basis.Scripts.Networking.Transmitters
         public void ClearAdditional() => SendingOutAvatarData.Clear();
         public override void Initialize()
         {
-            TransmissionResults.Initalize();
             AudioTransmission.Initialize(this);
             OnAvatarCalibrationLocal();
 
@@ -52,7 +51,6 @@ namespace Basis.Scripts.Networking.Transmitters
         }
         public override void DeInitialize()
         {
-            TransmissionResults.DeInitalize();
             AudioTransmission?.DeInitialize();
 
             if (HasEvents)

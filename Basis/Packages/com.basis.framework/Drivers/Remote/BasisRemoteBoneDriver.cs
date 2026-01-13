@@ -208,10 +208,6 @@ public struct BasisRemoteBoneJob : IJobParallelFor
 [BurstCompile(FloatMode = FloatMode.Fast, FloatPrecision = FloatPrecision.Standard)]
 public struct BasisDistanceJob : IJob
 {
-    public float SquaredVoiceDistance;
-    public float SquaredHearingDistance;
-    public float SquaredAvatarDistance;
-
     [ReadOnly] public NativeArray<RemoteFrameOutput> DistancesInput;
     [ReadOnly] public NativeArray<bool> PrevInMicrophoneRange;
     [ReadOnly] public NativeArray<bool> PrevInHearingRange;
@@ -220,55 +216,42 @@ public struct BasisDistanceJob : IJob
     [WriteOnly] public NativeArray<bool> MicrophoneRange;
     [WriteOnly] public NativeArray<bool> hearingRange;
     [WriteOnly] public NativeArray<bool> AvatarRange;
-
-    /// <summary>
-    /// AnyMicrophoneRangeChanged AnyHearingRangeChanged AnyAvatarRangeChanged AnyIdOrderOrLengthChanged;
-    /// </summary>
-    [WriteOnly] public NativeArray<bool> AnyChangedArray;
     [WriteOnly] public NativeArray<float> SMD;
+    public float VoiceEnterSq;
+    public float VoiceExitSq;
+
+    public float HearingEnterSq;
+    public float HearingExitSq;
+
+    public float AvatarEnterSq;
+    public float AvatarExitSq;
     public void Execute()
     {
-        float SmallestDistance = float.PositiveInfinity;
+        float smallestDistance = float.PositiveInfinity;
         int length = DistancesInput.Length;
 
-        bool AnyMicrophoneRangeChanged = false;
-        bool AnyHearingRangeChanged = false;
-        bool AnyAvatarRangeChanged = false;
-
-        for (int Index = 0; Index < length; Index++)
+        for (int i = 0; i < length; i++)
         {
-            float d2 = DistancesInput[Index].SquaredDistance;
+            float d2 = DistancesInput[i].SquaredDistance;
 
-            bool prevDist = PrevInMicrophoneRange[Index];
-            bool prevHear = PrevInHearingRange[Index];
-            bool prevAvatar = PrevInAvatarRange[Index];
+            bool prevVoice = PrevInMicrophoneRange[i];
+            bool prevHearing = PrevInHearingRange[i];
+            bool prevAvatar = PrevInAvatarRange[i];
 
-            bool Voice = d2 < SquaredVoiceDistance;
-            bool Hearing = d2 < SquaredHearingDistance;
-            bool Avatar = d2 < SquaredAvatarDistance;
+            bool voice = prevVoice ? d2 < VoiceExitSq : d2 < VoiceEnterSq;
 
-            MicrophoneRange[Index] = Voice;
-            hearingRange[Index] = Hearing;
-            AvatarRange[Index] = Avatar;
+            bool hearing = prevHearing ? d2 < HearingExitSq: d2 < HearingEnterSq;
 
-            if (Voice != prevDist)
-            {
-                AnyMicrophoneRangeChanged = true;
-            }
-            if (Hearing != prevHear)
-            {
-                AnyHearingRangeChanged = true;
-            }
-            if (Avatar != prevAvatar)
-            {
-                AnyAvatarRangeChanged = true;
-            }
-            SmallestDistance = math.min(SmallestDistance, d2);
+            bool avatar = prevAvatar ? d2 < AvatarExitSq : d2 < AvatarEnterSq;
+
+            MicrophoneRange[i] = voice;
+            hearingRange[i] = hearing;
+            AvatarRange[i] = avatar;
+
+            smallestDistance = math.min(smallestDistance, d2);
         }
-        SMD[0] = SmallestDistance;
-        AnyChangedArray[0] = AnyMicrophoneRangeChanged;
-        AnyChangedArray[1] = AnyHearingRangeChanged;
-        AnyChangedArray[2] = AnyAvatarRangeChanged;
+
+        SMD[0] = smallestDistance;
     }
 }
 
@@ -483,10 +466,6 @@ public static class RemoteBoneJobSystem
     static NativeArray<bool> PrevInHearingRange;
     static NativeArray<bool> PrevInAvatarRange;
     /// <summary>
-    /// any of the data sets changed?
-    /// </summary>
-    public static NativeArray<bool> AnyChangedArray;
-    /// <summary>
     /// 
     /// </summary>
     public static NativeArray<float> SMD;
@@ -496,7 +475,7 @@ public static class RemoteBoneJobSystem
     /// <summary>Pending job handle chain.</summary>
     static JobHandle sPending;
     /// <summary>Initialization flag.</summary>
-    static bool sInitialized;
+    public static bool sInitialized;
     public static int AuthoringLength;
     /// <summary>
     /// Allocates persistent containers and sets initial capacities for all arrays.
@@ -522,8 +501,6 @@ public static class RemoteBoneJobSystem
         sNamePlate = new TransformAccessArray(initialCapacity);
         sAvatarScale = new TransformAccessArray(initialCapacity);
         sMouth = new TransformAccessArray(initialCapacity);
-
-        AnyChangedArray = new NativeArray<bool>(3, Allocator.Persistent);
         SMD = new NativeArray<float>(1, Allocator.Persistent);
 
         MicrophoneRange = new NativeArray<bool>(initialCapacity, Allocator.Persistent);
@@ -559,8 +536,6 @@ public static class RemoteBoneJobSystem
         if (sNamePlate.isCreated) sNamePlate.Dispose();
         if (sAvatarScale.isCreated) sAvatarScale.Dispose();
         if (sMouth.isCreated) sMouth.Dispose();
-
-        if (AnyChangedArray.IsCreated) AnyChangedArray.Dispose();
         if (SMD.IsCreated) SMD.Dispose();
 
         if (MicrophoneRange.IsCreated) MicrophoneRange.Dispose();
@@ -880,18 +855,25 @@ public static class RemoteBoneJobSystem
         JobHandle DistanceJob = new BasisDistanceJob
         {
             DistancesInput = sOut.AsDeferredJobArray(),
-            SquaredAvatarDistance = SMModuleDistanceBasedReductions.AvatarRange,
-            SquaredHearingDistance = SMModuleDistanceBasedReductions.HearingRange,
-            SquaredVoiceDistance = SMModuleDistanceBasedReductions.MicrophoneRange,
-            AnyChangedArray = AnyChangedArray,
+
+            AvatarEnterSq = SMModuleDistanceBasedReductions.AvatarRange,
+            AvatarExitSq = SMModuleDistanceBasedReductions.AvatarRange * 1.10f,
+
+            HearingEnterSq = SMModuleDistanceBasedReductions.HearingRange,
+            HearingExitSq = SMModuleDistanceBasedReductions.HearingRange * 1.10f,
+
+            VoiceEnterSq = SMModuleDistanceBasedReductions.MicrophoneRange,
+            VoiceExitSq = SMModuleDistanceBasedReductions.MicrophoneRange * 1.10f,
+
             SMD = SMD,
+
             PrevInAvatarRange = PrevInAvatarRange,
             PrevInHearingRange = PrevInHearingRange,
             PrevInMicrophoneRange = PrevInMicrophoneRange,
+
             AvatarRange = AvatarRange,
             hearingRange = hearingRange,
             MicrophoneRange = MicrophoneRange,
-
 
         }.Schedule(MappedNameplateApplyJob);
 
@@ -914,90 +896,6 @@ public static class RemoteBoneJobSystem
 
         CompletePending();
     }
-
-    /// <summary>
-    /// Retrieves the computed outgoing/world mouth position for an avatar by key.
-    /// </summary>
-    /// <param name="key">Avatar key used when adding the player.</param>
-    /// <param name="outgoing">On success, the mouth world position; otherwise <see cref="Vector3.zero"/>.</param>
-    /// <returns><c>true</c> if the key is found; otherwise <c>false</c>.</returns>
-    public static bool GetOutGoingMouth(int key, out float3 outgoing)
-    {
-        if (!sKeyToIndex.TryGetValue(key, out int idx))
-        {
-            outgoing = Vector3.zero;
-            return false;
-        }
-        var o = sOut[idx];
-        outgoing = o.pos_Mouth;
-        return true;
-    }
-    /// <summary>
-    /// Retrieves the computed outgoing/world distance for an avatar by key.
-    /// </summary>
-    /// <param name="key">Avatar key used when adding the player.</param>
-    /// <param name="outgoing">On success, the mouth world position; otherwise <see cref="Vector3.zero"/>.</param>
-    /// <returns><c>true</c> if the key is found; otherwise <c>false</c>.</returns>
-    public static bool GetDistanceToLocalPlayer(int key, out float outgoing)
-    {
-        if (!sKeyToIndex.TryGetValue(key, out int idx))
-        {
-            outgoing = 0;
-            return false;
-        }
-        var o = sOut[idx];
-        outgoing = o.SquaredDistance;
-        return true;
-    }
-    /// <summary>
-    /// Returns the three change flags computed by BasisDistanceJob.
-    /// Indices: 0=Microphone, 1=Hearing, 2=Avatar.
-    /// </summary>
-    public static bool TryGetAnyChanged(out bool micChanged, out bool hearingChanged, out bool avatarChanged)
-    {
-        micChanged = hearingChanged = avatarChanged = false;
-        if (!sInitialized || !AnyChangedArray.IsCreated || AnyChangedArray.Length < 3) return false;
-
-        micChanged = AnyChangedArray[0];
-        hearingChanged = AnyChangedArray[1];
-        avatarChanged = AnyChangedArray[2];
-        return true;
-    }
-
-    /// <summary>
-    /// Copies AnyChangedArray into a caller-provided array (length >= 3).
-    /// </summary>
-    public static bool CopyAnyChanged(NativeArray<bool> dst)
-    {
-        if (!sInitialized || !AnyChangedArray.IsCreated || AnyChangedArray.Length < 3) return false;
-        if (!dst.IsCreated || dst.Length < 3) return false;
-
-        dst[0] = AnyChangedArray[0];
-        dst[1] = AnyChangedArray[1];
-        dst[2] = AnyChangedArray[2];
-        return true;
-    }
-
-    // --- Per-avatar ranges (bool arrays) ---
-
-    /// <summary>
-    /// Gets the current range booleans for a specific avatar key.
-    /// </summary>
-    public static bool TryGetRanges(int key, out bool inMic, out bool inHearing, out bool inAvatar)
-    {
-        inMic = inHearing = inAvatar = false;
-
-        if (!sInitialized) return false;
-        if (!sKeyToIndex.TryGetValue(key, out int idx)) return false;
-
-        if (!MicrophoneRange.IsCreated || !hearingRange.IsCreated || !AvatarRange.IsCreated) return false;
-        if ((uint)idx >= (uint)MicrophoneRange.Length) return false; // bounds guard
-
-        inMic = MicrophoneRange[idx];
-        inHearing = hearingRange[idx];
-        inAvatar = AvatarRange[idx];
-        return true;
-    }
     /// <summary>
     /// Gets the current microphone range boolean for a specific avatar key.
     /// </summary>
@@ -1005,7 +903,6 @@ public static class RemoteBoneJobSystem
     {
         inMic = false;
 
-        if (!sInitialized) return false;
         if (!sKeyToIndex.TryGetValue(key, out int idx)) return false;
         if (!MicrophoneRange.IsCreated) return false;
         if ((uint)idx >= (uint)MicrophoneRange.Length) return false;
@@ -1021,7 +918,6 @@ public static class RemoteBoneJobSystem
     {
         inAvatar = false;
 
-        if (!sInitialized) return false;
         if (!sKeyToIndex.TryGetValue(key, out int idx)) return false;
         if (!AvatarRange.IsCreated) return false;
         if ((uint)idx >= (uint)AvatarRange.Length) return false;
@@ -1037,34 +933,11 @@ public static class RemoteBoneJobSystem
     {
         inHearing = false;
 
-        if (!sInitialized) return false;
         if (!sKeyToIndex.TryGetValue(key, out int idx)) return false;
         if (!hearingRange.IsCreated) return false;
         if ((uint)idx >= (uint)hearingRange.Length) return false;
 
         inHearing = hearingRange[idx];
-        return true;
-    }
-    /// <summary>
-    /// Copies the three range arrays into caller-provided arrays of matching length.
-    /// </summary>
-    public static bool CopyRanges(
-        NativeArray<bool> micDst,
-        NativeArray<bool> hearingDst,
-        NativeArray<bool> avatarDst)
-    {
-        if (!sInitialized) return false;
-        int n = AuthoringLength;
-        if (n <= 0) return false;
-
-        if (!MicrophoneRange.IsCreated || !hearingRange.IsCreated || !AvatarRange.IsCreated) return false;
-        if (!micDst.IsCreated || micDst.Length < n) return false;
-        if (!hearingDst.IsCreated || hearingDst.Length < n) return false;
-        if (!avatarDst.IsCreated || avatarDst.Length < n) return false;
-
-        NativeArray<bool>.Copy(MicrophoneRange, micDst, n);
-        NativeArray<bool>.Copy(hearingRange, hearingDst, n);
-        NativeArray<bool>.Copy(AvatarRange, avatarDst, n);
         return true;
     }
     /// <summary>
@@ -1074,64 +947,10 @@ public static class RemoteBoneJobSystem
     public static bool TryGetDistanceSq(int key, out float distanceSq)
     {
         distanceSq = 0f;
-
-        if (!sInitialized) return false;
         if (!sKeyToIndex.TryGetValue(key, out int idx)) return false;
         if (!sOut.IsCreated || (uint)idx >= (uint)sOut.Length) return false;
 
         distanceSq = sOut[idx].SquaredDistance;
-        return true;
-    }
-
-    /// <summary>
-    /// Copies squared distances for all avatars into caller-provided dst (length >= AuthoringLength).
-    /// </summary>
-    public static bool CopyDistancesSq(NativeArray<float> dst)
-    {
-        if (!sInitialized) return false;
-        int n = AuthoringLength;
-        if (n <= 0) return false;
-
-        if (!sOut.IsCreated || sOut.Length < n) return false;
-        if (!dst.IsCreated || dst.Length < n) return false;
-
-        for (int i = 0; i < n; i++)
-            dst[i] = sOut[i].SquaredDistance;
-
-        return true;
-    }
-
-    /// <summary>
-    /// If you want true distance (non-squared) without changing the job, use this.
-    /// </summary>
-    public static bool CopyDistances(NativeArray<float> dst)
-    {
-        if (!CopyDistancesSq(dst)) return false;
-
-        // dst currently holds squared values; convert in-place to real distance
-        for (int i = 0; i < AuthoringLength; i++)
-            dst[i] = math.sqrt(dst[i]);
-
-        return true;
-    }
-
-    // --- Optional: expose "data" (the whole output struct per avatar) ---
-
-    /// <summary>
-    /// Copies the full RemoteFrameOutput array (pose + distance fields) into dst.
-    /// </summary>
-    public static bool CopyFrameOutputs(NativeArray<RemoteFrameOutput> dst)
-    {
-        if (!sInitialized) return false;
-        int n = AuthoringLength;
-        if (n <= 0) return false;
-
-        if (!sOut.IsCreated || sOut.Length < n) return false;
-        if (!dst.IsCreated || dst.Length < n) return false;
-
-        for (int i = 0; i < n; i++)
-            dst[i] = sOut[i];
-
         return true;
     }
     /// <summary>
@@ -1142,7 +961,7 @@ public static class RemoteBoneJobSystem
     {
         smallestDistanceSq = 0f;
 
-        if (!sInitialized || !SMD.IsCreated || SMD.Length < 1)
+        if (!SMD.IsCreated || SMD.Length < 1)
             return false;
 
         smallestDistanceSq = SMD[0];
