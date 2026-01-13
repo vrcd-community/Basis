@@ -7,6 +7,7 @@ using Basis.Scripts.Networking.Receivers;
 using Basis.Scripts.Networking.Transmitters;
 using Basis.Scripts.Profiler;
 using System.Collections.Generic;
+using Unity.Android.Gradle.Manifest;
 using Unity.Collections;
 using Unity.Jobs;
 using UnityEngine;
@@ -62,11 +63,18 @@ public partial class BasisTransmissionResults
 
 
         /// AnyMicrophoneRangeChanged AnyHearingRangeChanged AnyAvatarRangeChanged AnyIdOrderOrLengthChanged;
-        AnyMicrophoneRangeChanged = distanceJob.AnyChangedArray[0];
-        AnyHearingRangeChanged = distanceJob.AnyChangedArray[1];
-        AnyAvatarRangeChanged = distanceJob.AnyChangedArray[2];
-
-        SquaredSmallestDistance = distanceJob.SMD[0];
+        bool worked = RemoteBoneJobSystem.TryGetAnyChanged(out AnyMicrophoneRangeChanged, out AnyHearingRangeChanged, out AnyAvatarRangeChanged);
+        if (worked == false)
+        {
+            BasisDebug.LogError("unable to get any changed data!");
+            return;
+        }
+        worked = RemoteBoneJobSystem.TryGetSmallestDistanceSq(out SquaredSmallestDistance);
+        if (worked == false)
+        {
+            BasisDebug.LogError("unable to Squared Smallest Distance!");
+            return;
+        }
 
         bool MicrophoneChange = IndexChanged || AnyMicrophoneRangeChanged;
         bool HearingChange = IndexChanged || AnyHearingRangeChanged;
@@ -77,19 +85,25 @@ public partial class BasisTransmissionResults
             for (int index = 0; index < receiverCount; index++)
             {
                 var receiver = snapshot[index];
-                bool canHear = hearingRange[index];
-                if (receiver.AudioReceiverModule.HasAudioSource != canHear)
+                if (RemoteBoneJobSystem.TryGetHearingRange(receiver.playerId, out bool canHear))
                 {
-                    if (canHear)
+                    if (receiver.AudioReceiverModule.HasAudioSource != canHear)
                     {
-                        receiver.AudioReceiverModule.StartAudio();
-                        receiver.RemotePlayer.OutOfRangeFromLocal = false;
+                        if (canHear)
+                        {
+                            receiver.AudioReceiverModule.StartAudio();
+                            receiver.RemotePlayer.OutOfRangeFromLocal = false;
+                        }
+                        else
+                        {
+                            receiver.AudioReceiverModule.StopAudio();
+                            receiver.RemotePlayer.OutOfRangeFromLocal = true;
+                        }
                     }
-                    else
-                    {
-                        receiver.AudioReceiverModule.StopAudio();
-                        receiver.RemotePlayer.OutOfRangeFromLocal = true;
-                    }
+                }
+                else
+                {
+                    BasisDebug.LogError("Cant Get hearing Range!");
                 }
             }
         }
@@ -99,10 +113,20 @@ public partial class BasisTransmissionResults
             {
                 var receiver = snapshot[index];
                 var remote = receiver.RemotePlayer;
-                if (remote.IsLoadingAnAvatar == false && remote.InAvatarRange != AvatarRange[index])
+                if (remote.IsLoadingAnAvatar == false)
                 {
-                    remote.InAvatarRange = AvatarRange[index];
-                    remote.ReloadAvatar();
+                    if (RemoteBoneJobSystem.TryGetAvatarRange(receiver.playerId, out bool HasAvatar))
+                    {
+                        if (remote.InAvatarRange != HasAvatar)
+                        {
+                            remote.InAvatarRange = HasAvatar;
+                            remote.ReloadAvatar();
+                        }
+                    }
+                    else
+                    {
+                        BasisDebug.LogError("Cant Get Avatar Range!");
+                    }
                 }
             }
         }
@@ -111,8 +135,15 @@ public partial class BasisTransmissionResults
         {
             var receiver = snapshot[index];
             var remote = receiver.RemotePlayer;
-            // Distance-based mesh LOD
-            remote.ChangeMeshLOD(targetPositions[index], MeshLodMulitplier);
+            if (RemoteBoneJobSystem.TryGetDistanceSq(receiver.playerId, out float Distance))
+            {
+                // Distance-based mesh LOD
+                remote.ChangeMeshLOD(Distance, MeshLodMulitplier);
+            }
+            else
+            {
+                BasisDebug.LogError("Cant Get Avatar Range!");
+            }
         }
 
         //update the server with who we are talking to
@@ -125,11 +156,18 @@ public partial class BasisTransmissionResults
             TalkingPoints.Clear();
             for (int index = 0; index < receiverCount; index++)
             {
-                if (MicrophoneRange[index])
+                BasisNetworkReceiver remote = snapshot[index];
+                if (RemoteBoneJobSystem.TryGetMicrophoneRange(remote.playerId, out bool HasMicrophoneRange))
                 {
-                    BasisNetworkReceiver remote = snapshot[index];
-                    ushort ID = remote.playerId;
-                    TalkingPoints.Add(ID);
+                    if (HasMicrophoneRange)
+                    {
+                        ushort ID = remote.playerId;
+                        TalkingPoints.Add(ID);
+                    }
+                    else
+                    {
+                        BasisDebug.LogError("Cant Get Microphone Range!");
+                    }
                 }
             }
             BasisNetworkTransmitter.HasReasonToSendAudio = TalkingPoints.Count != 0;

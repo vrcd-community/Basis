@@ -475,13 +475,13 @@ public static class RemoteBoneJobSystem
     /// <summary>Temp head rotations.</summary>
     static NativeArray<quaternion> sTmpHeadRot, sTmpHipsRot;
 
-     static NativeArray<bool> hearingRange;
-     static NativeArray<float> targetPositions;
-     static NativeArray<bool> MicrophoneRange;
-     static NativeArray<bool> AvatarRange;
-     static NativeArray<bool> PrevInMicrophoneRange;
-     static NativeArray<bool> PrevInHearingRange;
-     static NativeArray<bool> PrevInAvatarRange;
+    static NativeArray<bool> hearingRange;
+    static NativeArray<float> targetPositions;
+    static NativeArray<bool> MicrophoneRange;
+    static NativeArray<bool> AvatarRange;
+    static NativeArray<bool> PrevInMicrophoneRange;
+    static NativeArray<bool> PrevInHearingRange;
+    static NativeArray<bool> PrevInAvatarRange;
     /// <summary>
     /// any of the data sets changed?
     /// </summary>
@@ -892,7 +892,7 @@ public static class RemoteBoneJobSystem
             hearingRange = hearingRange,
             MicrophoneRange = MicrophoneRange,
 
-             
+
         }.Schedule(MappedNameplateApplyJob);
 
         var ApplyMouthJob = new ApplyMouthJob
@@ -947,6 +947,205 @@ public static class RemoteBoneJobSystem
         }
         var o = sOut[idx];
         outgoing = o.SquaredDistance;
+        return true;
+    }
+    /// <summary>
+    /// Returns the three change flags computed by BasisDistanceJob.
+    /// Indices: 0=Microphone, 1=Hearing, 2=Avatar.
+    /// </summary>
+    public static bool TryGetAnyChanged(out bool micChanged, out bool hearingChanged, out bool avatarChanged)
+    {
+        micChanged = hearingChanged = avatarChanged = false;
+        if (!sInitialized || !AnyChangedArray.IsCreated || AnyChangedArray.Length < 3) return false;
+
+        micChanged = AnyChangedArray[0];
+        hearingChanged = AnyChangedArray[1];
+        avatarChanged = AnyChangedArray[2];
+        return true;
+    }
+
+    /// <summary>
+    /// Copies AnyChangedArray into a caller-provided array (length >= 3).
+    /// </summary>
+    public static bool CopyAnyChanged(NativeArray<bool> dst)
+    {
+        if (!sInitialized || !AnyChangedArray.IsCreated || AnyChangedArray.Length < 3) return false;
+        if (!dst.IsCreated || dst.Length < 3) return false;
+
+        dst[0] = AnyChangedArray[0];
+        dst[1] = AnyChangedArray[1];
+        dst[2] = AnyChangedArray[2];
+        return true;
+    }
+
+    // --- Per-avatar ranges (bool arrays) ---
+
+    /// <summary>
+    /// Gets the current range booleans for a specific avatar key.
+    /// </summary>
+    public static bool TryGetRanges(int key, out bool inMic, out bool inHearing, out bool inAvatar)
+    {
+        inMic = inHearing = inAvatar = false;
+
+        if (!sInitialized) return false;
+        if (!sKeyToIndex.TryGetValue(key, out int idx)) return false;
+
+        if (!MicrophoneRange.IsCreated || !hearingRange.IsCreated || !AvatarRange.IsCreated) return false;
+        if ((uint)idx >= (uint)MicrophoneRange.Length) return false; // bounds guard
+
+        inMic = MicrophoneRange[idx];
+        inHearing = hearingRange[idx];
+        inAvatar = AvatarRange[idx];
+        return true;
+    }
+    /// <summary>
+    /// Gets the current microphone range boolean for a specific avatar key.
+    /// </summary>
+    public static bool TryGetMicrophoneRange(int key, out bool inMic)
+    {
+        inMic = false;
+
+        if (!sInitialized) return false;
+        if (!sKeyToIndex.TryGetValue(key, out int idx)) return false;
+        if (!MicrophoneRange.IsCreated) return false;
+        if ((uint)idx >= (uint)MicrophoneRange.Length) return false;
+
+        inMic = MicrophoneRange[idx];
+        return true;
+    }
+
+    /// <summary>
+    /// Gets the current avatar range boolean for a specific avatar key.
+    /// </summary>
+    public static bool TryGetAvatarRange(int key, out bool inAvatar)
+    {
+        inAvatar = false;
+
+        if (!sInitialized) return false;
+        if (!sKeyToIndex.TryGetValue(key, out int idx)) return false;
+        if (!AvatarRange.IsCreated) return false;
+        if ((uint)idx >= (uint)AvatarRange.Length) return false;
+
+        inAvatar = AvatarRange[idx];
+        return true;
+    }
+
+    /// <summary>
+    /// Gets the current hearing range boolean for a specific avatar key.
+    /// </summary>
+    public static bool TryGetHearingRange(int key, out bool inHearing)
+    {
+        inHearing = false;
+
+        if (!sInitialized) return false;
+        if (!sKeyToIndex.TryGetValue(key, out int idx)) return false;
+        if (!hearingRange.IsCreated) return false;
+        if ((uint)idx >= (uint)hearingRange.Length) return false;
+
+        inHearing = hearingRange[idx];
+        return true;
+    }
+    /// <summary>
+    /// Copies the three range arrays into caller-provided arrays of matching length.
+    /// </summary>
+    public static bool CopyRanges(
+        NativeArray<bool> micDst,
+        NativeArray<bool> hearingDst,
+        NativeArray<bool> avatarDst)
+    {
+        if (!sInitialized) return false;
+        int n = AuthoringLength;
+        if (n <= 0) return false;
+
+        if (!MicrophoneRange.IsCreated || !hearingRange.IsCreated || !AvatarRange.IsCreated) return false;
+        if (!micDst.IsCreated || micDst.Length < n) return false;
+        if (!hearingDst.IsCreated || hearingDst.Length < n) return false;
+        if (!avatarDst.IsCreated || avatarDst.Length < n) return false;
+
+        NativeArray<bool>.Copy(MicrophoneRange, micDst, n);
+        NativeArray<bool>.Copy(hearingRange, hearingDst, n);
+        NativeArray<bool>.Copy(AvatarRange, avatarDst, n);
+        return true;
+    }
+    /// <summary>
+    /// Gets the (currently stored) squared distance for a specific avatar key.
+    /// Note: your RemoteFrameOutput.DistanceToLocalPlayer is currently LENGTHSQ, not length.
+    /// </summary>
+    public static bool TryGetDistanceSq(int key, out float distanceSq)
+    {
+        distanceSq = 0f;
+
+        if (!sInitialized) return false;
+        if (!sKeyToIndex.TryGetValue(key, out int idx)) return false;
+        if (!sOut.IsCreated || (uint)idx >= (uint)sOut.Length) return false;
+
+        distanceSq = sOut[idx].SquaredDistance;
+        return true;
+    }
+
+    /// <summary>
+    /// Copies squared distances for all avatars into caller-provided dst (length >= AuthoringLength).
+    /// </summary>
+    public static bool CopyDistancesSq(NativeArray<float> dst)
+    {
+        if (!sInitialized) return false;
+        int n = AuthoringLength;
+        if (n <= 0) return false;
+
+        if (!sOut.IsCreated || sOut.Length < n) return false;
+        if (!dst.IsCreated || dst.Length < n) return false;
+
+        for (int i = 0; i < n; i++)
+            dst[i] = sOut[i].SquaredDistance;
+
+        return true;
+    }
+
+    /// <summary>
+    /// If you want true distance (non-squared) without changing the job, use this.
+    /// </summary>
+    public static bool CopyDistances(NativeArray<float> dst)
+    {
+        if (!CopyDistancesSq(dst)) return false;
+
+        // dst currently holds squared values; convert in-place to real distance
+        for (int i = 0; i < AuthoringLength; i++)
+            dst[i] = math.sqrt(dst[i]);
+
+        return true;
+    }
+
+    // --- Optional: expose "data" (the whole output struct per avatar) ---
+
+    /// <summary>
+    /// Copies the full RemoteFrameOutput array (pose + distance fields) into dst.
+    /// </summary>
+    public static bool CopyFrameOutputs(NativeArray<RemoteFrameOutput> dst)
+    {
+        if (!sInitialized) return false;
+        int n = AuthoringLength;
+        if (n <= 0) return false;
+
+        if (!sOut.IsCreated || sOut.Length < n) return false;
+        if (!dst.IsCreated || dst.Length < n) return false;
+
+        for (int i = 0; i < n; i++)
+            dst[i] = sOut[i];
+
+        return true;
+    }
+    /// <summary>
+    /// Gets the smallest squared distance from the last completed BasisDistanceJob pass.
+    /// (This is SMD[0], currently squared.)
+    /// </summary>
+    public static bool TryGetSmallestDistanceSq(out float smallestDistanceSq)
+    {
+        smallestDistanceSq = 0f;
+
+        if (!sInitialized || !SMD.IsCreated || SMD.Length < 1)
+            return false;
+
+        smallestDistanceSq = SMD[0];
         return true;
     }
 }
