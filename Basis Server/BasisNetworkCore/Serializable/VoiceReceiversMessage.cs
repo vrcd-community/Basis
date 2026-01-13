@@ -8,7 +8,15 @@ public static partial class SerializableBasis
         // Hard cap to avoid giant allocations if data is corrupted
         private const int MaxUsers = 1024;
 
+        /// <summary>
+        /// Backing storage. May be larger than Count.
+        /// </summary>
         public ushort[] Users;
+
+        /// <summary>
+        /// Number of valid entries in Users to serialize.
+        /// </summary>
+        public int Count;
 
         public void Deserialize(NetDataReader reader)
         {
@@ -18,26 +26,29 @@ public static partial class SerializableBasis
             if (remainingBytes <= 0)
             {
                 Users = Array.Empty<ushort>();
+                Count = 0;
                 return;
             }
 
             // Need at least 2 bytes for the length
             if (remainingBytes < sizeof(ushort))
             {
-                BNL.LogError(
-                    $"VoiceReceiversMessage: not enough bytes for length. " +
-                    $"Remaining={remainingBytes}");
+                BNL.LogError($"VoiceReceiversMessage: not enough bytes for length. Remaining={remainingBytes}");
+
                 SkipRemaining(reader);
                 Users = Array.Empty<ushort>();
+                Count = 0;
                 return;
             }
 
             // Read the count
-            ushort count = reader.GetUShort();
+            ushort countU16 = reader.GetUShort();
+            int count = countU16;
 
             if (count == 0)
             {
                 Users = Array.Empty<ushort>();
+                Count = 0;
                 return;
             }
 
@@ -47,6 +58,7 @@ public static partial class SerializableBasis
                 BNL.LogError($"VoiceReceiversMessage: reported count={count} exceeds MaxUsers={MaxUsers}. Possible protocol mismatch or corrupted packet.");
                 SkipRemaining(reader);
                 Users = Array.Empty<ushort>();
+                Count = 0;
                 return;
             }
 
@@ -57,45 +69,63 @@ public static partial class SerializableBasis
                 BNL.LogError($"VoiceReceiversMessage: count={count} needs {bytesNeeded} bytes, but only {reader.AvailableBytes} available. Protocol mismatch?");
                 SkipRemaining(reader);
                 Users = Array.Empty<ushort>();
+                Count = 0;
                 return;
             }
 
-            // Now it's safe to read
-            Users = new ushort[count];
-            for (int i = 0; i < count; i++)
+            // Ensure buffer (reuse if possible)
+            if (Users == null || Users.Length < count)
             {
-                Users[i] = reader.GetUShort();
+                Users = new ushort[count];
             }
+
+            for (int Index = 0; Index < count; Index++)
+            {
+                Users[Index] = reader.GetUShort();
+            }
+
+            Count = count;
         }
 
         public void Serialize(NetDataWriter writer)
         {
-            if (Users == null || Users.Length == 0)
+            int count = Count;
+
+            if (Users == null || count <= 0)
             {
-                // Still write a 0-length so read side stays in sync
                 writer.Put((ushort)0);
                 return;
             }
 
-            if (Users.Length > ushort.MaxValue)
+            // Clamp to actual buffer size
+            if (count > Users.Length)
             {
-                BNL.LogError(
-                    $"VoiceReceiversMessage: Users.Length={Users.Length} exceeds ushort.MaxValue. " +
-                    "Truncating.");
+                count = Users.Length;
             }
 
-            ushort count = (ushort)Math.Min(Users.Length, ushort.MaxValue);
-            writer.Put(count);
-
-            for (int i = 0; i < count; i++)
+            // Clamp to protocol max + ushort max
+            if (count > MaxUsers)
             {
-                writer.Put(Users[i]);
+                BNL.LogError($"VoiceReceiversMessage: Count={count} exceeds MaxUsers={MaxUsers}. Truncating.");
+                count = MaxUsers;
+            }
+
+            if (count > ushort.MaxValue)
+            {
+                BNL.LogError($"VoiceReceiversMessage: Count={count} exceeds ushort.MaxValue. Truncating.");
+                count = ushort.MaxValue;
+            }
+
+            writer.Put((ushort)count);
+
+            for (int Index = 0; Index < count; Index++)
+            {
+                writer.Put(Users[Index]);
             }
         }
 
         private static void SkipRemaining(NetDataReader reader)
         {
-            // Helper to avoid desync after bad packets
             if (reader.AvailableBytes > 0)
             {
                 reader.SkipBytes(reader.AvailableBytes);
