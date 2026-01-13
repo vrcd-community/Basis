@@ -1,22 +1,18 @@
+
 using Basis.Network.Core;
 using Basis.Network.Core.Compression;
-using Basis.Scripts.Networking.Compression;
 using BasisNetworkClientConsole;
-using static BasisNetworkPrimitiveCompression;
 using static SerializableBasis;
-
+using Basis.Scripts.Networking.Compression;
+using System.Runtime.CompilerServices;
 namespace Basis.Network
 {
     public static class MovementSender
     {
-        public static Quaternion Rotation = new Quaternion(0, 0, 0, 1);
-
+        public static Quaternion Rotation;
         private const ushort UShortMin = ushort.MinValue;   // 0
         private const ushort UShortMax = ushort.MaxValue;   // 65535
         private const ushort UShortRangeDifference = UShortMax - UShortMin;
-
-        public static BasisRangedUshortFloatData RotationCompression = new BasisRangedUshortFloatData(-1f, 1f, 0.001f);
-
         public static Vector3[] PlayersCurrentPosition;
         public static PlayerData[] ActivePlayerData;
 
@@ -31,6 +27,7 @@ namespace Basis.Network
 
         public static void Initialize(int clientCount)
         {
+            Rotation = new Quaternion(0, 0, 0, 1);
             PlayersCurrentPosition = new Vector3[clientCount];
             ActivePlayerData = new PlayerData[clientCount];
 
@@ -60,7 +57,7 @@ namespace Basis.Network
             WritePosition(Randomizer.GetRandomOffset(), ref message.array, ref offset);//12
 
             // Rotation xyz (12 bytes) + compressed w (2 bytes)
-            WriteQuaternionToBytes(Rotation, ref message.array, ref offset, RotationCompression);//14
+            WriteQuaternionToBytes(Rotation, ref message.array, ref offset);//16
 
             // Scale (2 bytes) at the end
             int scaleOffset = BasisBitPackingConstants.AvatarSyncSize - 2;
@@ -106,29 +103,28 @@ namespace Basis.Network
             offset += 12;
         }
 
-        public unsafe static void WriteQuaternionToBytes(Quaternion q, ref byte[] bytes, ref int offset, BasisRangedUshortFloatData compressor)
+        public unsafe static void WriteQuaternionToBytes(Scripts.Networking.Compression.Quaternion q, ref byte[] bytes, ref int offset)
         {
-            fixed (byte* ptr = &bytes[offset])
+            EnsureSpace(bytes, offset, 16); fixed (byte* ptr = &bytes[offset])
             {
-                *((float*)ptr) = float.IsNaN(q.value.x) ? 0f : q.value.x;
-                *((float*)(ptr + 4)) = float.IsNaN(q.value.y) ? 0f : q.value.y;
-                *((float*)(ptr + 8)) = float.IsNaN(q.value.z) ? 0f : q.value.z;
+                float* f = (float*)ptr; f[0] = q.value.x;
+                f[1] = q.value.y;
+                f[2] = q.value.z;
+                f[3] = q.value.w;
             }
-            offset += 12;
-
-            float w = float.IsNaN(q.value.w) ? 1f : q.value.w;
-            ushort compressedW = compressor.Compress(w);
-            WriteUShort(compressedW, ref bytes, ref offset);
+            offset += 16;
         }
-
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static bool EnsureSpace(byte[] bytes, int offset, int size)
+        {
+            return (uint)offset <= (uint)bytes.Length && offset + size <= bytes.Length;
+        }
         private static ushort CompressScaleOnce(float scale)
         {
             const float Min = 0.005f;
             const float Max = 150f;
             const float Range = Max - Min;
-            float clamped = scale;//math.clamp(scale, Min, Max);
-            // Normalized value of a uniform scale of 1.0 within [Min, Max]
-            float normalized = (clamped - Min) / Range;
+            float normalized = (scale - Min) / Range;
             ushort compressed = (ushort)(normalized * UShortRangeDifference);
 
             return compressed;

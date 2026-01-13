@@ -77,6 +77,7 @@ namespace Basis.Scripts.Networking.NetworkedAvatar
             int startOffset = offset;
             if (!math.isfinite(secondsInterval) || secondsInterval <= 0.0 || secondsInterval > 1.0)
             {
+                BasisDebug.LogError($"Bad secondsInterval", BasisDebug.LogTag.Remote);
                 goto Fail;
             }
             basisAvatarBuffer = BasisAvatarBufferPool.Get();
@@ -84,12 +85,14 @@ namespace Basis.Scripts.Networking.NetworkedAvatar
             // Position
             if (!BasisUnityBitPackerExtensionsUnsafe.TryReadPosition(ref data, ref offset, out basisAvatarBuffer.Position))
             {
+                BasisDebug.LogError($"Bad Position", BasisDebug.LogTag.Remote);
                 goto Fail;
             }
 
             // Rotation
             if (!BasisUnityBitPackerExtensionsUnsafe.TryReadQuaternionFromBytes( ref data, ref offset, out basisAvatarBuffer.Rotation))
             {
+                BasisDebug.LogError($"Bad Rotation", BasisDebug.LogTag.Remote);
                 goto Fail;
             }
             BasisOrderedDataSet.DecompressAvatarMuscles_BitPacked( data, ref basisAvatarBuffer.Muscles, ref offset);
@@ -97,6 +100,7 @@ namespace Basis.Scripts.Networking.NetworkedAvatar
             // Scale
             if (!BasisUnityBitPackerExtensionsUnsafe.TryReadUShort( ref data, ref offset, out ushort uScale))
             {
+                BasisDebug.LogError($"Bad Scale", BasisDebug.LogTag.Remote);
                 goto Fail;
             }
 
