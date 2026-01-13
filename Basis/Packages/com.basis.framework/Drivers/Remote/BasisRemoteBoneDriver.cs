@@ -6,6 +6,7 @@ using Unity.Collections;
 using Unity.Jobs;
 using Unity.Mathematics;
 using UnityEngine;
+using UnityEngine.InputSystem;
 using UnityEngine.Jobs;
 
 /// <summary>
@@ -207,16 +208,17 @@ public struct BasisDistanceJob : IJob
 {
     [ReadOnly] public NativeArray<RemoteFrameOutput> DistancesInput;
 
-    [ReadOnly] public NativeArray<bool> PrevInMicrophoneRange;
-    [ReadOnly] public NativeArray<bool> PrevInHearingRange;
-    [ReadOnly] public NativeArray<bool> PrevInAvatarRange;
+    [ReadOnly] public NativeArray<byte> PrevInMicrophoneRange;
+    [ReadOnly] public NativeArray<byte> PrevInHearingRange;
+    [ReadOnly] public NativeArray<byte> PrevInAvatarRange;
 
-    [WriteOnly] public NativeArray<bool> MicrophoneRange;
-    [WriteOnly] public NativeArray<bool> hearingRange;
-    [WriteOnly] public NativeArray<bool> AvatarRange;
+    [WriteOnly] public NativeArray<byte> MicrophoneRange;
+    [WriteOnly] public NativeArray<byte> HearingRange;
+    [WriteOnly] public NativeArray<byte> AvatarRange;
+
     [WriteOnly] public NativeArray<float> SMD;
 
-    // Enter thresholds (SQUARED)
+    // squared thresholds
     public float VoiceEnterSq;
     public float HearingEnterSq;
     public float AvatarEnterSq;
@@ -225,10 +227,12 @@ public struct BasisDistanceJob : IJob
     {
         float smallestDistance = float.PositiveInfinity;
 
-        // Compute exit thresholds once
-        float voiceExitSq = VoiceEnterSq * 1.10f;
-        float hearingExitSq = HearingEnterSq * 1.10f;
-        float avatarExitSq = AvatarEnterSq * 1.10f;
+        const float hysteresis = 1.10f;
+        float h2 = hysteresis * hysteresis;
+
+        float voiceExitSq = VoiceEnterSq * h2;
+        float hearingExitSq = HearingEnterSq * h2;
+        float avatarExitSq = AvatarEnterSq * h2;
 
         int length = DistancesInput.Length;
 
@@ -236,24 +240,17 @@ public struct BasisDistanceJob : IJob
         {
             float d2 = DistancesInput[i].SquaredDistance;
 
-            bool voice =
-                PrevInMicrophoneRange[i]
-                    ? d2 < voiceExitSq
-                    : d2 < VoiceEnterSq;
+            bool prevVoice = PrevInMicrophoneRange[i] != 0;
+            bool prevHearing = PrevInHearingRange[i] != 0;
+            bool prevAvatar = PrevInAvatarRange[i] != 0;
 
-            bool hearing =
-                PrevInHearingRange[i]
-                    ? d2 < hearingExitSq
-                    : d2 < HearingEnterSq;
+            bool voice = prevVoice ? d2 <= voiceExitSq : d2 <= VoiceEnterSq;
+            bool hearing = prevHearing ? d2 <= hearingExitSq : d2 <= HearingEnterSq;
+            bool avatar = prevAvatar ? d2 <= avatarExitSq : d2 <= AvatarEnterSq;
 
-            bool avatar =
-                PrevInAvatarRange[i]
-                    ? d2 < avatarExitSq
-                    : d2 < AvatarEnterSq;
-
-            MicrophoneRange[i] = voice;
-            hearingRange[i] = hearing;
-            AvatarRange[i] = avatar;
+            MicrophoneRange[i] = voice ? (byte)1 : (byte)0;
+            HearingRange[i] = hearing ? (byte)1 : (byte)0;
+            AvatarRange[i] = avatar ? (byte)1 : (byte)0;
 
             smallestDistance = math.min(smallestDistance, d2);
         }
@@ -465,13 +462,13 @@ public static class RemoteBoneJobSystem
     /// <summary>Temp head rotations.</summary>
     static NativeArray<quaternion> sTmpHeadRot, sTmpHipsRot;
 
-    static NativeArray<bool> hearingRange;
+    static NativeArray<byte> hearingRange;
     static NativeArray<float> targetPositions;
-    static NativeArray<bool> MicrophoneRange;
-    static NativeArray<bool> AvatarRange;
-    static NativeArray<bool> PrevInMicrophoneRange;
-    static NativeArray<bool> PrevInHearingRange;
-    static NativeArray<bool> PrevInAvatarRange;
+    static NativeArray<byte> MicrophoneRange;
+    static NativeArray<byte> AvatarRange;
+    static NativeArray<byte> PrevInMicrophoneRange;
+    static NativeArray<byte> PrevInHearingRange;
+    static NativeArray<byte> PrevInAvatarRange;
     /// <summary>
     /// 
     /// </summary>
@@ -510,12 +507,12 @@ public static class RemoteBoneJobSystem
         sMouth = new TransformAccessArray(initialCapacity);
         SMD = new NativeArray<float>(1, Allocator.Persistent);
 
-        MicrophoneRange = new NativeArray<bool>(initialCapacity, Allocator.Persistent);
-        hearingRange = new NativeArray<bool>(initialCapacity, Allocator.Persistent);
-        AvatarRange = new NativeArray<bool>(initialCapacity, Allocator.Persistent);
-        PrevInMicrophoneRange = new NativeArray<bool>(initialCapacity, Allocator.Persistent);
-        PrevInHearingRange = new NativeArray<bool>(initialCapacity, Allocator.Persistent);
-        PrevInAvatarRange = new NativeArray<bool>(initialCapacity, Allocator.Persistent);
+        MicrophoneRange = new NativeArray<byte>(initialCapacity, Allocator.Persistent);
+        hearingRange = new NativeArray<byte>(initialCapacity, Allocator.Persistent);
+        AvatarRange = new NativeArray<byte>(initialCapacity, Allocator.Persistent);
+        PrevInMicrophoneRange = new NativeArray<byte>(initialCapacity, Allocator.Persistent);
+        PrevInHearingRange = new NativeArray<byte>(initialCapacity, Allocator.Persistent);
+        PrevInAvatarRange = new NativeArray<byte>(initialCapacity, Allocator.Persistent);
         targetPositions = new NativeArray<float>(initialCapacity, Allocator.Persistent);
 
         sInitialized = true;
@@ -720,40 +717,56 @@ public static class RemoteBoneJobSystem
 
     /// <summary>
     /// Ensures temporary per-frame buffers exist and match the current avatar count.
+    /// IMPORTANT:
+    /// - Range + Prev byte arrays are allocated with ClearMemory to avoid garbage "previous state"
+    ///   after resize (which breaks hysteresis logic).
+    /// - Other temp buffers can stay UninitializedMemory for speed.
     /// </summary>
     /// <param name="count">Number of avatars to accommodate.</param>
     static void EnsureTempBuffers(int count)
     {
         if (count <= 0) return;
 
-        void AllocOrResize<T>(ref NativeArray<T> arr, int len) where T : struct
+        // Generic alloc/resize helper (fast path).
+        void AllocOrResize<T>(ref NativeArray<T> arr, int len, NativeArrayOptions options) where T : struct
         {
             if (arr.IsCreated)
             {
                 if (arr.Length != len)
                 {
                     arr.Dispose();
-                    arr = new NativeArray<T>(len, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
+                    arr = new NativeArray<T>(len, Allocator.Persistent, options);
                 }
             }
             else
             {
-                arr = new NativeArray<T>(len, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
+                arr = new NativeArray<T>(len, Allocator.Persistent, options);
             }
         }
-        AllocOrResize(ref sTmpRootPos, count);
-        AllocOrResize(ref sTmpRootScale, count);
-        AllocOrResize(ref sTmpHeadPos, count);
-        AllocOrResize(ref sTmpHeadRot, count);
-        AllocOrResize(ref sTmpHipsPos, count);
-        AllocOrResize(ref sTmpHipsRot, count);
-        AllocOrResize(ref MicrophoneRange, count);
-        AllocOrResize(ref hearingRange, count);
-        AllocOrResize(ref AvatarRange, count);
-        AllocOrResize(ref PrevInMicrophoneRange, count);
-        AllocOrResize(ref PrevInHearingRange, count);
-        AllocOrResize(ref PrevInAvatarRange, count);
-        AllocOrResize(ref targetPositions, count);
+
+        // Temp gather buffers: safe to be uninitialized (jobs will write every element).
+        AllocOrResize(ref sTmpRootPos, count, NativeArrayOptions.UninitializedMemory);
+        AllocOrResize(ref sTmpRootScale, count, NativeArrayOptions.UninitializedMemory);
+        AllocOrResize(ref sTmpHeadPos, count, NativeArrayOptions.UninitializedMemory);
+        AllocOrResize(ref sTmpHeadRot, count, NativeArrayOptions.UninitializedMemory);
+        AllocOrResize(ref sTmpHipsPos, count, NativeArrayOptions.UninitializedMemory);
+        AllocOrResize(ref sTmpHipsRot, count, NativeArrayOptions.UninitializedMemory);
+
+        // Range state output buffers: we write every element each frame, but clearing is harmless
+        // and prevents any accidental read-before-write during refactors.
+        AllocOrResize(ref MicrophoneRange, count, NativeArrayOptions.ClearMemory);
+        AllocOrResize(ref hearingRange, count, NativeArrayOptions.ClearMemory);
+        AllocOrResize(ref AvatarRange, count, NativeArrayOptions.ClearMemory);
+
+        // Previous-frame hysteresis state: MUST be known (0/1), otherwise hysteresis flips randomly.
+        // ClearMemory makes new entries default to 0 (out of range).
+        AllocOrResize(ref PrevInMicrophoneRange, count, NativeArrayOptions.ClearMemory);
+        AllocOrResize(ref PrevInHearingRange, count, NativeArrayOptions.ClearMemory);
+        AllocOrResize(ref PrevInAvatarRange, count, NativeArrayOptions.ClearMemory);
+
+        // If you actually use this later, decide whether to ClearMemory or UninitializedMemory.
+        // Keeping ClearMemory here avoids random values on new slots.
+        AllocOrResize(ref targetPositions, count, NativeArrayOptions.ClearMemory);
     }
 
     /// <summary>
@@ -874,7 +887,7 @@ public static class RemoteBoneJobSystem
             PrevInMicrophoneRange = PrevInMicrophoneRange,
 
             AvatarRange = AvatarRange,
-            hearingRange = hearingRange,
+             HearingRange = hearingRange,
             MicrophoneRange = MicrophoneRange,
 
         }.Schedule(MappedNameplateApplyJob);
@@ -899,22 +912,22 @@ public static class RemoteBoneJobSystem
         CompletePending();
     }
     /// <summary>
-    /// Gets the current microphone range boolean for a specific avatar key.
+    /// Gets the current microphone range state (0 = out, 1 = in)
+    /// for a specific avatar key.
     /// </summary>
-    public static bool TryGetMicrophoneRange(int key, out bool inMic)
+    public static bool TryGetMicrophoneRange(int key, out byte inMic)
     {
-        inMic = false;
+        inMic = 0;
 
         if (!sKeyToIndex.TryGetValue(key, out int idx)) return false;
         if (!MicrophoneRange.IsCreated) return false;
         if ((uint)idx >= (uint)MicrophoneRange.Length) return false;
 
-        inMic = MicrophoneRange[idx];
+        inMic = MicrophoneRange[idx]; // guaranteed 0 or 1
         return true;
     }
-
     /// <summary>
-    /// Gets the current avatar range boolean for a specific avatar key.
+    /// Gets the current avatar range state for a specific avatar key.
     /// </summary>
     public static bool TryGetAvatarRange(int key, out bool inAvatar)
     {
@@ -924,12 +937,11 @@ public static class RemoteBoneJobSystem
         if (!AvatarRange.IsCreated) return false;
         if ((uint)idx >= (uint)AvatarRange.Length) return false;
 
-        inAvatar = AvatarRange[idx];
+        inAvatar = AvatarRange[idx] != 0;
         return true;
     }
-
     /// <summary>
-    /// Gets the current hearing range boolean for a specific avatar key.
+    /// Gets the current hearing range state for a specific avatar key.
     /// </summary>
     public static bool TryGetHearingRange(int key, out bool inHearing)
     {
@@ -939,7 +951,7 @@ public static class RemoteBoneJobSystem
         if (!hearingRange.IsCreated) return false;
         if ((uint)idx >= (uint)hearingRange.Length) return false;
 
-        inHearing = hearingRange[idx];
+        inHearing = hearingRange[idx] != 0;
         return true;
     }
     /// <summary>

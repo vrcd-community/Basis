@@ -148,7 +148,7 @@ public partial class BasisTransmissionResults
 
             _playerIds[Index] = remote.playerId;
 
-            if (!RemoteBoneJobSystem.TryGetMicrophoneRange(remote.playerId, out bool hasMicrophoneRange))
+            if (!RemoteBoneJobSystem.TryGetMicrophoneRange(remote.playerId, out byte hasMicrophoneRange))
             {
                 // treat failures as out of range; also log (optional)
                 BasisDebug.LogError("Can't get microphone range!");
@@ -156,7 +156,7 @@ public partial class BasisTransmissionResults
             }
             else
             {
-                _inMicRange[Index] = hasMicrophoneRange ? (byte)1 : (byte)0;
+                _inMicRange[Index] = hasMicrophoneRange;
             }
         }
 
