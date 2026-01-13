@@ -1,8 +1,5 @@
 using Basis.Scripts.Common;
 using Basis.Scripts.Drivers;
-using Basis.Scripts.Networking;
-using Basis.Scripts.Networking.Transmitters;
-using System;
 using System.Collections.Generic;
 using Unity.Burst;
 using Unity.Collections;
