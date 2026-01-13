@@ -2,6 +2,7 @@ using Basis.Network.Core;
 using Basis.Network.Core.Compression;
 using Basis.Scripts.Networking.NetworkedAvatar;
 using Basis.Scripts.Profiler;
+using Basis.Scripts.TransformBinders.BoneControl;
 using System;
 using System.Collections.Generic;
 using UnityEngine;
@@ -26,7 +27,6 @@ namespace Basis.Scripts.Networking.Transmitters
 
         public NetDataWriter AvatarSendWriter = new NetDataWriter(true, BasisBitPackingConstants.AvatarSyncSize + 2);
         public Dictionary<byte, AdditionalAvatarData> SendingOutAvatarData = new Dictionary<byte, AdditionalAvatarData>();
-
         public static Action AfterAvatarChanges;
         public BasisNetworkTransmitter(ushort PlayerID)
         {

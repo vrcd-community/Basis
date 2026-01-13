@@ -1,5 +1,7 @@
 using Basis.Scripts.Common;
 using Basis.Scripts.Drivers;
+using Basis.Scripts.Networking;
+using Basis.Scripts.Networking.Transmitters;
 using System;
 using System.Collections.Generic;
 using Unity.Burst;
@@ -120,6 +122,8 @@ public struct RemoteFrameOutput
     /// Vertical delta between hips and mouth in scaled TPose space (used for UI placement).
     /// </summary>
     public float HeightAvatarHipCoord;
+
+    public float SquaredDistance;
 }
 
 /// <summary>
@@ -139,15 +143,16 @@ public struct BasisRemoteBoneJob : IJobParallelFor
     /// <summary>Writable per-frame scale cache (scaled TPose and offsets).</summary>
     public NativeArray<RemoteScaleCache> GeneratedScales;
 
+    public float3 LocalPlayersPosition;
     /// <summary>
     /// Executes the bone solve for one avatar.
     /// </summary>
-    /// <param name="i">Avatar index.</param>
-    public void Execute(int i)
+    /// <param name="Index">Avatar index.</param>
+    public void Execute(int Index)
     {
-        var a = Authoring[i];
-        var f = In[i];
-        var sc = GeneratedScales[i];
+        var a = Authoring[Index];
+        var f = In[Index];
+        var sc = GeneratedScales[Index];
 
         // Scale TPose + offsets by current world scale
         sc.tposeLocal_scaled_Hips = a.tposeLocal_unscaled_Hips * f.nowScale;
@@ -157,13 +162,14 @@ public struct BasisRemoteBoneJob : IJobParallelFor
         sc.offsets_scaled_Spine = a.offsets_unscaled_Spine * f.nowScale;
         sc.offsets_scaled_CenterEye = a.offsets_unscaled_CenterEye * f.nowScale;
         sc.offsets_scaled_Mouth = a.offsets_unscaled_Mouth * f.nowScale;
-        GeneratedScales[i] = sc;
+        GeneratedScales[Index] = sc;
 
         // Compose world rotations (TPose→current)
         quaternion headR = math.mul(f.headWRot, f.tposeHeadRot);
         quaternion hipsR = math.mul(f.tposeHipsRot, f.hipsWRot);
 
         // Convert to avatar-local positions relative to rootWorld
+        // this is not a mistake, this is very intended!
         float3 headP = f.headWPos - f.rootWorld;
         float3 hipsP = f.hipsWPos - f.rootWorld;
 
@@ -173,7 +179,11 @@ public struct BasisRemoteBoneJob : IJobParallelFor
         float3 spineP = chestP + math.mul(headR, sc.offsets_scaled_Spine);
         float3 eyeP = headP + math.mul(headR, sc.offsets_scaled_CenterEye);
         float3 mouthP = headP + math.mul(headR, sc.offsets_scaled_Mouth);
-        Out[i] = new RemoteFrameOutput
+
+        float3 diff = mouthP - LocalPlayersPosition;
+        float SquaredDistance = math.lengthsq(diff);
+
+        Out[Index] = new RemoteFrameOutput
         {
             pos_Head = headP,
             pos_Neck = neckP,
@@ -189,9 +199,76 @@ public struct BasisRemoteBoneJob : IJobParallelFor
             rot_Hips = hipsR,
             rot_CenterEye = headR,
             rot_Mouth = headR,
+            SquaredDistance = SquaredDistance,
             // Used for vertical offsetting of the nameplate UI
             HeightAvatarHipCoord = sc.tposeLocal_scaled_Hips.y * 1.2f
         };
+    }
+}
+[BurstCompile(FloatMode = FloatMode.Fast, FloatPrecision = FloatPrecision.Standard)]
+public struct BasisDistanceJob : IJob
+{
+    public float SquaredVoiceDistance;
+    public float SquaredHearingDistance;
+    public float SquaredAvatarDistance;
+
+    [ReadOnly] public NativeArray<RemoteFrameOutput> DistancesInput;
+    [ReadOnly] public NativeArray<bool> PrevInMicrophoneRange;
+    [ReadOnly] public NativeArray<bool> PrevInHearingRange;
+    [ReadOnly] public NativeArray<bool> PrevInAvatarRange;
+
+    [WriteOnly] public NativeArray<bool> MicrophoneRange;
+    [WriteOnly] public NativeArray<bool> hearingRange;
+    [WriteOnly] public NativeArray<bool> AvatarRange;
+
+    /// <summary>
+    /// AnyMicrophoneRangeChanged AnyHearingRangeChanged AnyAvatarRangeChanged AnyIdOrderOrLengthChanged;
+    /// </summary>
+    [WriteOnly] public NativeArray<bool> AnyChangedArray;
+    [WriteOnly] public NativeArray<float> SMD;
+    public void Execute()
+    {
+        float SmallestDistance = float.PositiveInfinity;
+        int length = DistancesInput.Length;
+
+        bool AnyMicrophoneRangeChanged = false;
+        bool AnyHearingRangeChanged = false;
+        bool AnyAvatarRangeChanged = false;
+
+        for (int Index = 0; Index < length; Index++)
+        {
+            float d2 = DistancesInput[Index].SquaredDistance;
+
+            bool prevDist = PrevInMicrophoneRange[Index];
+            bool prevHear = PrevInHearingRange[Index];
+            bool prevAvatar = PrevInAvatarRange[Index];
+
+            bool Voice = d2 < SquaredVoiceDistance;
+            bool Hearing = d2 < SquaredHearingDistance;
+            bool Avatar = d2 < SquaredAvatarDistance;
+
+            MicrophoneRange[Index] = Voice;
+            hearingRange[Index] = Hearing;
+            AvatarRange[Index] = Avatar;
+
+            if (Voice != prevDist)
+            {
+                AnyMicrophoneRangeChanged = true;
+            }
+            if (Hearing != prevHear)
+            {
+                AnyHearingRangeChanged = true;
+            }
+            if (Avatar != prevAvatar)
+            {
+                AnyAvatarRangeChanged = true;
+            }
+            SmallestDistance = math.min(SmallestDistance, d2);
+        }
+        SMD[0] = SmallestDistance;
+        AnyChangedArray[0] = AnyMicrophoneRangeChanged;
+        AnyChangedArray[1] = AnyHearingRangeChanged;
+        AnyChangedArray[2] = AnyAvatarRangeChanged;
     }
 }
 
@@ -398,6 +475,21 @@ public static class RemoteBoneJobSystem
     /// <summary>Temp head rotations.</summary>
     static NativeArray<quaternion> sTmpHeadRot, sTmpHipsRot;
 
+     static NativeArray<bool> hearingRange;
+     static NativeArray<float> targetPositions;
+     static NativeArray<bool> MicrophoneRange;
+     static NativeArray<bool> AvatarRange;
+     static NativeArray<bool> PrevInMicrophoneRange;
+     static NativeArray<bool> PrevInHearingRange;
+     static NativeArray<bool> PrevInAvatarRange;
+    /// <summary>
+    /// any of the data sets changed?
+    /// </summary>
+    public static NativeArray<bool> AnyChangedArray;
+    /// <summary>
+    /// 
+    /// </summary>
+    public static NativeArray<float> SMD;
     // Bookkeeping
     /// <summary>Map from external key → internal SoA index.</summary>
     static readonly Dictionary<int, int> sKeyToIndex = new Dictionary<int, int>();
@@ -431,6 +523,17 @@ public static class RemoteBoneJobSystem
         sAvatarScale = new TransformAccessArray(initialCapacity);
         sMouth = new TransformAccessArray(initialCapacity);
 
+        AnyChangedArray = new NativeArray<bool>(3, Allocator.Persistent);
+        SMD = new NativeArray<float>(1, Allocator.Persistent);
+
+        MicrophoneRange = new NativeArray<bool>(initialCapacity, Allocator.Persistent);
+        hearingRange = new NativeArray<bool>(initialCapacity, Allocator.Persistent);
+        AvatarRange = new NativeArray<bool>(initialCapacity, Allocator.Persistent);
+        PrevInMicrophoneRange = new NativeArray<bool>(initialCapacity, Allocator.Persistent);
+        PrevInHearingRange = new NativeArray<bool>(initialCapacity, Allocator.Persistent);
+        PrevInAvatarRange = new NativeArray<bool>(initialCapacity, Allocator.Persistent);
+        targetPositions = new NativeArray<float>(initialCapacity, Allocator.Persistent);
+
         sInitialized = true;
     }
 
@@ -457,6 +560,17 @@ public static class RemoteBoneJobSystem
         if (sAvatarScale.isCreated) sAvatarScale.Dispose();
         if (sMouth.isCreated) sMouth.Dispose();
 
+        if (AnyChangedArray.IsCreated) AnyChangedArray.Dispose();
+        if (SMD.IsCreated) SMD.Dispose();
+
+        if (MicrophoneRange.IsCreated) MicrophoneRange.Dispose();
+        if (hearingRange.IsCreated) hearingRange.Dispose();
+        if (AvatarRange.IsCreated) AvatarRange.Dispose();
+        if (PrevInMicrophoneRange.IsCreated) PrevInMicrophoneRange.Dispose();
+        if (PrevInHearingRange.IsCreated) PrevInHearingRange.Dispose();
+        if (PrevInAvatarRange.IsCreated) PrevInAvatarRange.Dispose();
+        if (targetPositions.IsCreated) targetPositions.Dispose();
+
         DisposeTempBuffers();
 
         sKeyToIndex.Clear();
@@ -470,6 +584,12 @@ public static class RemoteBoneJobSystem
     {
         sPending.Complete();
         sPending = default;
+
+
+        // Cache current as previous for next hysteresis step
+        MicrophoneRange.CopyTo(PrevInMicrophoneRange);
+        hearingRange.CopyTo(PrevInHearingRange);
+        AvatarRange.CopyTo(PrevInAvatarRange);
     }
 
     /// <summary>
@@ -645,6 +765,13 @@ public static class RemoteBoneJobSystem
         AllocOrResize(ref sTmpHeadRot, count);
         AllocOrResize(ref sTmpHipsPos, count);
         AllocOrResize(ref sTmpHipsRot, count);
+        AllocOrResize(ref MicrophoneRange, count);
+        AllocOrResize(ref hearingRange, count);
+        AllocOrResize(ref AvatarRange, count);
+        AllocOrResize(ref PrevInMicrophoneRange, count);
+        AllocOrResize(ref PrevInHearingRange, count);
+        AllocOrResize(ref PrevInAvatarRange, count);
+        AllocOrResize(ref targetPositions, count);
     }
 
     /// <summary>
@@ -733,17 +860,16 @@ public static class RemoteBoneJobSystem
             InOut = sIn.AsDeferredJobArray()
         }.Schedule(AuthoringLength, batchSize, deps);
 
+        Vector3 CameraPosition = BasisLocalCameraDriver.Position;
         // Run bone simulation
         var BoneSimulation = new BasisRemoteBoneJob
         {
             Authoring = sAuthoring.AsDeferredJobArray(),
             In = sIn.AsDeferredJobArray(),
             GeneratedScales = sScale.AsDeferredJobArray(),
-            Out = sOut.AsDeferredJobArray()
+            Out = sOut.AsDeferredJobArray(),
+            LocalPlayersPosition = CameraPosition,
         }.Schedule(AuthoringLength, batchSize, combine);
-
-        // Apply outputs
-        Vector3 CameraPosition = BasisLocalCameraDriver.Position;
 
         var MappedNameplateApplyJob = new MappedNameplateApplyJob
         {
@@ -751,10 +877,28 @@ public static class RemoteBoneJobSystem
             NamePlateIn = sOut.AsDeferredJobArray(),
         }.Schedule(sNamePlate, BoneSimulation);
 
+        JobHandle DistanceJob = new BasisDistanceJob
+        {
+            DistancesInput = sOut.AsDeferredJobArray(),
+            SquaredAvatarDistance = SMModuleDistanceBasedReductions.AvatarRange,
+            SquaredHearingDistance = SMModuleDistanceBasedReductions.HearingRange,
+            SquaredVoiceDistance = SMModuleDistanceBasedReductions.MicrophoneRange,
+            AnyChangedArray = AnyChangedArray,
+            SMD = SMD,
+            PrevInAvatarRange = PrevInAvatarRange,
+            PrevInHearingRange = PrevInHearingRange,
+            PrevInMicrophoneRange = PrevInMicrophoneRange,
+            AvatarRange = AvatarRange,
+            hearingRange = hearingRange,
+            MicrophoneRange = MicrophoneRange,
+
+             
+        }.Schedule(MappedNameplateApplyJob);
+
         var ApplyMouthJob = new ApplyMouthJob
         {
             MouthRotation = sOut.AsDeferredJobArray(),
-        }.Schedule(sMouth, MappedNameplateApplyJob);
+        }.Schedule(sMouth, DistanceJob);
 
         sPending = ApplyMouthJob;
         return ApplyMouthJob;
@@ -786,6 +930,23 @@ public static class RemoteBoneJobSystem
         }
         var o = sOut[idx];
         outgoing = o.pos_Mouth;
+        return true;
+    }
+    /// <summary>
+    /// Retrieves the computed outgoing/world distance for an avatar by key.
+    /// </summary>
+    /// <param name="key">Avatar key used when adding the player.</param>
+    /// <param name="outgoing">On success, the mouth world position; otherwise <see cref="Vector3.zero"/>.</param>
+    /// <returns><c>true</c> if the key is found; otherwise <c>false</c>.</returns>
+    public static bool GetDistanceToLocalPlayer(int key, out float outgoing)
+    {
+        if (!sKeyToIndex.TryGetValue(key, out int idx))
+        {
+            outgoing = 0;
+            return false;
+        }
+        var o = sOut[idx];
+        outgoing = o.SquaredDistance;
         return true;
     }
 }

@@ -165,6 +165,10 @@ namespace Basis.Scripts.Networking
 
             BasisNetworkPlayers.PublishReceiversSnapshot();
 
+            if(Transmitter == null)
+            {
+                return;
+            }
             BoneJobSystem = RemoteBoneJobSystem.Schedule(); // will always be a frame behind
 
             UnscaledDeltaTime = Math.Max(UnscaledDeltaTime, 0f);
