@@ -16,5 +16,6 @@
 	<ItemGroup>
 	  <PackageReference Include="System.Threading.Tasks" Version="4.3.0" />
 		<ProjectReference Include="..\LiteNetLib\LiteNetLib.csproj" />
+		<ProjectReference Include="..\ZstdSharp\ZstdSharp\ZstdSharp.csproj" />
 	</ItemGroup>
 </Project>
